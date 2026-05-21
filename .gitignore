@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Runner and Locust output
+test-reports/
+reports/
+locust-*.html
+locust-*.log
+locust-*_stats.csv
+locust-*_stats_history.csv
+locust-*_failures.csv
+locust-*_exceptions.csv
+
+# Optional local MinIO source checkout or release extraction
+minio-RELEASE.*/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
