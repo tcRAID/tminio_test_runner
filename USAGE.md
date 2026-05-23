@@ -138,11 +138,11 @@ The account used for full functional coverage must permit:
 - object tagging
 - bucket tagging
 - bucket policy
-- bucket CORS
+- bucket CORS when the target endpoint implements the CORS API
 - bucket lifecycle
 - bucket versioning
 - object lock governance and legal hold
-- SSE-C put, get, and head
+- SSE-C put, get, and head for HTTPS endpoints
 
 Command-line credential flags are accepted by the runner. Values passed through
 `--access-key` and `--secret-key` are redacted from `report.json`.
@@ -154,8 +154,17 @@ certificate during validation, the command can include:
 python3 minio_test_runner.py smoke --no-verify-tls
 ```
 
+<<<<<<< HEAD
 ## Source Validation
 
+=======
+When the endpoint uses plain HTTP, smoke mode verifies that SSE-C requests are
+rejected with MinIO's expected secure-transport error instead of attempting the
+HTTPS-only SSE-C read-back path.
+
+## Source Validation
+
+>>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 Source validation builds the MinIO server binary and runs Go tests.
 
 ```bash
@@ -399,7 +408,12 @@ Endpoint cannot be reached:
 TLS certificate error:
 
 - Install the endpoint CA certificate in the validation host trust store.
+<<<<<<< HEAD
 - For isolated validation environments, add `--no-verify-tls`.
+=======
+- For isolated validation environments, add `--no-verify-tls`; this applies to
+  boto3 calls, health checks, and presigned URL checks.
+>>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 `AccessDenied`:
 

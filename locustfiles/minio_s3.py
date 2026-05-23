@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import random
+import ssl
 import threading
 import time
 import traceback
@@ -25,6 +26,7 @@ ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "")
 SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "")
 REGION = os.getenv("MINIO_REGION", "us-east-1")
 VERIFY_TLS = os.getenv("MINIO_VERIFY_TLS", "1") != "0"
+URLLIB_CONTEXT = None if VERIFY_TLS else ssl._create_unverified_context()
 BUCKET_PREFIX = os.getenv("MINIO_TEST_BUCKET_PREFIX", "minio-test")
 CLEANUP = os.getenv("MINIO_TEST_CLEANUP", "1") != "0"
 LONG_OBJECT_LIMIT = int(os.getenv("MINIO_LONG_OBJECT_LIMIT", "500"))
@@ -111,10 +113,25 @@ class S3Mixin:
 
         return self.record("CHECK", name, _expect)
 
+    def record_optional_client_error(
+        self, request_type: str, name: str, func: Callable[[], Any], expected: set[str]
+    ) -> Any:
+        def _optional() -> Any:
+            try:
+                return func()
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                status = str(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", ""))
+                if code in expected or status in expected:
+                    return exc
+                raise
+
+        return self.record(request_type, name, _optional)
+
     def read_url(self, url: str, method: str = "GET", data: bytes | None = None) -> bytes:
         def _read() -> bytes:
             req = urllib.request.Request(url, data=data, method=method)
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=30, context=URLLIB_CONTEXT) as response:
                 return response.read()
 
         return self.record("HTTP", f"presigned-{method}", _read)
@@ -174,7 +191,7 @@ class S3Mixin:
             url = f"{self.host.rstrip('/')}{path}"
 
             def _read() -> int:
-                with urllib.request.urlopen(url, timeout=10) as response:
+                with urllib.request.urlopen(url, timeout=10, context=URLLIB_CONTEXT) as response:
                     return response.status
 
             status = self.record("HTTP", path, _read)
@@ -437,7 +454,7 @@ class S3Mixin:
             )
             tags = self.record("S3", "GetBucketTagging", lambda: self.client.get_bucket_tagging(Bucket=bucket))["TagSet"]
             self.check("bucket-tagging", {"Key": "suite", "Value": "functional"} in tags, "bucket tag missing")
-            self.record(
+            cors_response = self.record_optional_client_error(
                 "S3",
                 "PutBucketCors",
                 lambda: self.client.put_bucket_cors(
@@ -454,9 +471,13 @@ class S3Mixin:
                         ]
                     },
                 ),
+                {"501", "NotImplemented"},
             )
-            cors = self.record("S3", "GetBucketCors", lambda: self.client.get_bucket_cors(Bucket=bucket))
-            self.check("bucket-cors", len(cors.get("CORSRules", [])) == 1, "CORS rule missing")
+            if isinstance(cors_response, ClientError):
+                self.check("bucket-cors-not-implemented", True, "CORS API reported NotImplemented")
+            else:
+                cors = self.record("S3", "GetBucketCors", lambda: self.client.get_bucket_cors(Bucket=bucket))
+                self.check("bucket-cors", len(cors.get("CORSRules", [])) == 1, "CORS rule missing")
             self.record(
                 "S3",
                 "PutBucketLifecycle",
@@ -488,16 +509,34 @@ class S3Mixin:
             key = "encrypted/customer-key.bin"
             customer_key = base64.b64encode(os.urandom(32)).decode("ascii")
             body = b"secret payload with sse-c"
-            self.record(
-                "S3",
-                "PutObject.sse-c",
-                lambda: self.client.put_object(
+
+            def put_ssec() -> Any:
+                return self.client.put_object(
                     Bucket=bucket,
                     Key=key,
                     Body=body,
                     SSECustomerAlgorithm="AES256",
                     SSECustomerKey=customer_key,
-                ),
+                )
+
+            if self.host.lower().startswith("http://"):
+                rejected = self.record_optional_client_error(
+                    "S3",
+                    "PutObject.sse-c",
+                    put_ssec,
+                    {"400", "InvalidRequest"},
+                )
+                self.check(
+                    "sse-c-requires-https",
+                    isinstance(rejected, ClientError),
+                    "SSE-C unexpectedly succeeded over HTTP",
+                )
+                return
+
+            self.record(
+                "S3",
+                "PutObject.sse-c",
+                put_ssec,
                 len(body),
             )
             got = self.record(

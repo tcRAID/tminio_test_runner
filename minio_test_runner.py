@@ -107,11 +107,18 @@ def resolve_minio_dir(path: str | pathlib.Path) -> pathlib.Path:
 
 def make_report_root(base: pathlib.Path, mode: str) -> pathlib.Path:
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    root = base.expanduser().resolve() / f"{stamp}-{safe_name(mode)}"
-    root.mkdir(parents=True, exist_ok=False)
-    (root / "logs").mkdir()
-    (root / "work").mkdir()
-    return root
+    base = base.expanduser().resolve()
+    for attempt in range(100):
+        suffix = "" if attempt == 0 else f"-{attempt:02d}"
+        root = base / f"{stamp}-{safe_name(mode)}{suffix}"
+        try:
+            root.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        (root / "logs").mkdir()
+        (root / "work").mkdir()
+        return root
+    raise StepError(f"could not create unique report directory under {base}")
 
 
 @dataclasses.dataclass
