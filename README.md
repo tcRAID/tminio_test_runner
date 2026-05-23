@@ -1,22 +1,23 @@
-# tminio_test_runner
+# MinIO Validation Runner
 
-External MinIO source and functional test runner. Use it to build/test a local
-MinIO source tree, then run S3 correctness workloads against an existing
-MinIO/S3 endpoint.
+This repository packages an external validation runner for MinIO source and
+S3-compatible endpoint verification. The suite validates build readiness,
+source-level Go test results, functional S3 behavior, and long-running mixed
+S3 workload stability against an existing MinIO deployment.
 
-## What To Run
+## Validation Coverage
 
-| Goal | Command |
+| Validation area | Command |
 | --- | --- |
-| Fast source feedback | `python3 minio_test_runner.py source --packages ./cmd` |
-| Full source test pass | `python3 minio_test_runner.py source` |
-| Fast cluster correctness check | `python3 minio_test_runner.py smoke` |
-| Long stability/correctness run | `python3 minio_test_runner.py long --duration 12h --users 8` |
+| Source build and focused Go package validation | `python3 minio_test_runner.py source --packages ./cmd` |
+| Full source build and Go package validation | `python3 minio_test_runner.py source` |
+| Functional S3 correctness validation | `python3 minio_test_runner.py smoke` |
+| Long-running S3 correctness and stability validation | `python3 minio_test_runner.py long --duration 12h --users 8` |
 
-Smoke mode is a single-user correctness check. Use `long` mode for concurrent
-or long-running workloads.
+Smoke mode is intentionally single-user and deterministic. Long mode covers
+concurrent and extended-duration workload behavior.
 
-## Setup Once
+## Execution Environment
 
 ```bash
 python3 -m venv .venv
@@ -24,29 +25,32 @@ python3 -m venv .venv
 python3 -m pip install --upgrade pip
 python3 -m pip install -r minio-test-requirements.txt
 
-export MINIO_DIR=/path/to/minio-RELEASE.2025-06-13T11-33-47Z
+export MINIO_DIR=/opt/minio-RELEASE.2025-06-13T11-33-47Z
 export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=your-access-key
-export MINIO_SECRET_KEY=your-secret-key
+export MINIO_ACCESS_KEY=test-access-key
+export MINIO_SECRET_KEY=test-secret-key
 export MINIO_REGION=us-east-1
 ```
 
-## Most Common Flow
+## Standard Validation Execution
 
 ```bash
 python3 minio_test_runner.py source --packages ./cmd
 python3 minio_test_runner.py smoke
 ```
 
-Reports are written under `test-reports/` by default.
+The runner writes validation evidence under `test-reports/` by default,
+including `summary.md`, `report.json`, command logs, and Locust HTML/CSV
+reports for functional runs.
 
-## Repo Scope
+## Package Scope
 
-This repo contains the runner, Locust workloads, and documentation. It does
-not vendor the MinIO source tree. For source builds/tests, point the runner at
-a local MinIO checkout or extracted release with `MINIO_DIR` or `--minio-dir`.
+The package contains the runner, Locust workloads, dependency list, and
+validation documentation. It does not vendor the MinIO source tree. Source
+validation uses `MINIO_DIR` or `--minio-dir` to target the MinIO source release
+under test.
 
 ## Documentation
 
-- [USAGE.md](USAGE.md): installation, configuration, commands, reports, and troubleshooting.
-- [TEST_PLAN.md](TEST_PLAN.md): test scope, pass/fail criteria, risks, and release gate guidance.
+- [USAGE.md](USAGE.md): execution environment, commands, reports, and troubleshooting.
+- [TEST_PLAN.md](TEST_PLAN.md): validation coverage, case procedures, expected results, and cleanup.

@@ -1,6 +1,9 @@
-# MinIO Test Tool Documentation
+# MinIO Validation Documentation
 
-Start here if you only need the common workflow:
+The MinIO validation package documents both execution procedure and test
+coverage. The standard validation sequence prepares the Python runtime,
+targets the MinIO source release, targets the MinIO/S3 endpoint, and executes
+source plus functional validation.
 
 ```bash
 python3 -m venv .venv
@@ -8,18 +11,21 @@ python3 -m venv .venv
 python3 -m pip install -r minio-test-requirements.txt
 
 export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=your-access-key
-export MINIO_SECRET_KEY=your-secret-key
-export MINIO_DIR=/path/to/minio-RELEASE.2025-06-13T11-33-47Z
+export MINIO_ACCESS_KEY=test-access-key
+export MINIO_SECRET_KEY=test-secret-key
+export MINIO_DIR=/opt/minio-RELEASE.2025-06-13T11-33-47Z
 
 python3 minio_test_runner.py source --packages ./cmd
 python3 minio_test_runner.py smoke
 ```
 
-Use `python3 minio_test_runner.py long --duration 12h --users 8` for
-pre-merge, nightly, or stability validation.
+Long-running validation is executed with:
 
-The documentation for this test tool is split into two primary documents:
+```bash
+python3 minio_test_runner.py long --duration 12h --users 8
+```
 
-- [USAGE.md](USAGE.md): Linux/Ubuntu 22 installation, configuration, execution, reports, and troubleshooting.
-- [TEST_PLAN.md](TEST_PLAN.md): test goals, scope, pass/fail criteria, limitations, and release gate recommendations.
+Documentation set:
+
+- [USAGE.md](USAGE.md): validation environment, execution commands, evidence, cleanup, and troubleshooting.
+- [TEST_PLAN.md](TEST_PLAN.md): validation coverage matrix, case procedures, expected results, and cleanup.

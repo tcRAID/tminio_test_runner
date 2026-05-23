@@ -185,7 +185,7 @@ class Report:
         (self.root / "report.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
         lines = [
-            f"# MinIO test report: {self.mode}",
+            f"# MinIO validation report: {self.mode}",
             "",
             f"- Started: {self.started_at}",
             f"- Finished: {self.finished_at or ''}",
@@ -359,9 +359,9 @@ def build_minio(
 def run_source(args: argparse.Namespace) -> int:
     report_root = make_report_root(pathlib.Path(args.report_dir), "source")
     report = Report("source", report_root)
-    minio_dir = resolve_minio_dir(args.minio_dir)
-    report.metadata["minio_dir"] = str(minio_dir)
     try:
+        minio_dir = resolve_minio_dir(args.minio_dir)
+        report.metadata["minio_dir"] = str(minio_dir)
         require_tool("go")
         run_command(report, "go-env", ["go", "env"], cwd=minio_dir, timeout=120)
         if not args.skip_build:
@@ -465,7 +465,7 @@ def run_functional(args: argparse.Namespace, mode: str) -> int:
     locust_log_path = report.log_dir / f"locust-{mode}.internal.log"
     try:
         if mode == "smoke" and args.users != 1:
-            raise StepError("smoke mode runs a single user; use --users 1 or use long mode for concurrent workloads")
+            raise StepError("smoke mode requires --users 1; long mode supports concurrent workloads")
         if not args.access_key or not args.secret_key:
             raise StepError(
                 "MinIO credentials are required. Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY, "
@@ -564,10 +564,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--minio-dir",
         default=os.getenv("MINIO_DIR", str(DEFAULT_MINIO_DIR)),
-        help="path to the MinIO source directory; defaults to MINIO_DIR or a colocated MinIO release directory",
+        help="path to the MinIO source directory; defaults from MINIO_DIR or a colocated MinIO release directory",
     )
     parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="directory for reports")
-    parser.add_argument("--keep-workdir", action="store_true", help="keep temporary work files after successful runs")
+    parser.add_argument("--keep-workdir", action="store_true", help="preserve work files after successful runs")
     parser.add_argument("--build-tags", default="kqueue", help="Go build tags for building MinIO")
 
 
@@ -577,15 +577,15 @@ def add_functional_args(parser: argparse.ArgumentParser, long_mode: bool = False
     default_secret_key = os.getenv("MINIO_SECRET_KEY", DEFAULT_SECRET_KEY)
     default_region = os.getenv("MINIO_REGION", "us-east-1")
     parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="directory for reports")
-    parser.add_argument("--keep-workdir", action="store_true", help="keep temporary work files after successful runs")
+    parser.add_argument("--keep-workdir", action="store_true", help="preserve work files after successful runs")
     parser.add_argument("--locustfile", default=str(DEFAULT_LOCUSTFILE), help="Locust file to execute")
     parser.add_argument("--endpoint", default=default_endpoint, help="running MinIO/S3 endpoint")
-    parser.add_argument("--access-key", default=default_access_key, help="S3 access key; prefer MINIO_ACCESS_KEY")
-    parser.add_argument("--secret-key", default=default_secret_key, help="S3 secret key; prefer MINIO_SECRET_KEY")
+    parser.add_argument("--access-key", default=default_access_key, help="S3 access key; defaults from MINIO_ACCESS_KEY")
+    parser.add_argument("--secret-key", default=default_secret_key, help="S3 secret key; defaults from MINIO_SECRET_KEY")
     parser.add_argument("--region", default=default_region)
     parser.add_argument("--no-verify-tls", action="store_true", help="disable TLS certificate verification")
-    parser.add_argument("--bucket-prefix", help="bucket prefix for test-created buckets")
-    parser.add_argument("--no-cleanup", action="store_true", help="leave test-created buckets in the cluster")
+    parser.add_argument("--bucket-prefix", help="bucket prefix for validation-created buckets")
+    parser.add_argument("--no-cleanup", action="store_true", help="preserve validation-created buckets in the cluster")
     parser.add_argument("--spawn-rate", type=float, default=1.0, help="Locust user spawn rate")
     parser.add_argument("--stop-timeout", type=int, default=30, help="Locust stop timeout in seconds")
     parser.add_argument(
@@ -615,10 +615,10 @@ def add_functional_args(parser: argparse.ArgumentParser, long_mode: bool = False
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="External MinIO source and functional test runner")
+    parser = argparse.ArgumentParser(description="MinIO source and S3 endpoint validation runner")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    source = sub.add_parser("source", help="run source build and Go tests")
+    source = sub.add_parser("source", help="validate source build and Go tests")
     add_common_args(source)
     source.add_argument("--packages", nargs="+", default=["./..."], help="Go packages to test")
     source.add_argument("--timeout", default="60m", help="go test timeout")
@@ -630,10 +630,10 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--skip-build", action="store_true", help="skip go build")
     source.add_argument("--skip-tests", action="store_true", help="skip go test")
 
-    smoke = sub.add_parser("smoke", help="run functional smoke tests")
+    smoke = sub.add_parser("smoke", help="run functional smoke validation")
     add_functional_args(smoke)
 
-    long = sub.add_parser("long", help="run 12-hour functional/system tests")
+    long = sub.add_parser("long", help="run long-running functional validation")
     add_functional_args(long, long_mode=True)
 
     return parser
