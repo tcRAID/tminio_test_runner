@@ -171,7 +171,6 @@ Setup:
 export MINIO_ENDPOINT=http://minio.example.internal:9000
 export MINIO_ACCESS_KEY=test-access-key
 export MINIO_SECRET_KEY=test-secret-key
-export MINIO_REGION=us-east-1
 ```
 
 Required account permissions:

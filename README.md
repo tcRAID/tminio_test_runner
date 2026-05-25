@@ -29,7 +29,6 @@ export MINIO_DIR=/opt/minio-RELEASE.2025-06-13T11-33-47Z
 export MINIO_ENDPOINT=http://minio.example.internal:9000
 export MINIO_ACCESS_KEY=test-access-key
 export MINIO_SECRET_KEY=test-secret-key
-export MINIO_REGION=us-east-1
 ```
 
 ## Standard Validation Execution

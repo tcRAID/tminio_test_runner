@@ -21,15 +21,19 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from locust import User, between, task
 
-
 ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "")
 SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "")
-REGION = os.getenv("MINIO_REGION", "us-east-1")
+ENDPOINT = os.getenv("MINIO_ENDPOINT", "").rstrip("/")
 VERIFY_TLS = os.getenv("MINIO_VERIFY_TLS", "1") != "0"
 URLLIB_CONTEXT = None if VERIFY_TLS else ssl._create_unverified_context()
 BUCKET_PREFIX = os.getenv("MINIO_TEST_BUCKET_PREFIX", "minio-test")
 CLEANUP = os.getenv("MINIO_TEST_CLEANUP", "1") != "0"
 LONG_OBJECT_LIMIT = int(os.getenv("MINIO_LONG_OBJECT_LIMIT", "500"))
+S3_CLIENT_CONFIG = Config(
+    signature_version="s3v4",
+    s3={"addressing_style": "path"},
+    retries={"max_attempts": 4, "mode": "standard"},
+)
 
 
 class TestFailure(RuntimeError):
@@ -50,23 +54,17 @@ class S3Mixin:
     wait_time = between(0.1, 0.5)
 
     def on_start(self) -> None:
-        if not ACCESS_KEY or not SECRET_KEY:
-            raise TestFailure("MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set")
+        if not ENDPOINT or not ACCESS_KEY or not SECRET_KEY:
+            raise TestFailure("MINIO_ENDPOINT, MINIO_ACCESS_KEY, and MINIO_SECRET_KEY must be set")
         self.client = self.new_client()
 
     def new_client(self) -> Any:
         return boto3.client(
             "s3",
-            endpoint_url=self.host,
+            endpoint_url=ENDPOINT,
             aws_access_key_id=ACCESS_KEY,
             aws_secret_access_key=SECRET_KEY,
-            region_name=REGION,
-            verify=VERIFY_TLS,
-            config=Config(
-                signature_version="s3v4",
-                s3={"addressing_style": "path"},
-                retries={"max_attempts": 4, "mode": "standard"},
-            ),
+            config=S3_CLIENT_CONFIG,
         )
 
     def record(
@@ -188,7 +186,7 @@ class S3Mixin:
 
     def health_checks(self) -> None:
         for path in ("/minio/health/live", "/minio/health/ready"):
-            url = f"{self.host.rstrip('/')}{path}"
+            url = f"{ENDPOINT}{path}"
 
             def _read() -> int:
                 with urllib.request.urlopen(url, timeout=10, context=URLLIB_CONTEXT) as response:
@@ -431,7 +429,7 @@ class S3Mixin:
             self.record(
                 "S3", "PutBucketPolicy", lambda: self.client.put_bucket_policy(Bucket=bucket, Policy=json.dumps(policy))
             )
-            public_body = self.read_url(f"{self.host.rstrip('/')}/{bucket}/{key}")
+            public_body = self.read_url(f"{ENDPOINT}/{bucket}/{key}")
             self.check("bucket-policy-public-read", public_body == body, "anonymous policy GET mismatch")
         finally:
             self.cleanup_bucket(bucket)
@@ -519,7 +517,7 @@ class S3Mixin:
                     SSECustomerKey=customer_key,
                 )
 
-            if self.host.lower().startswith("http://"):
+            if ENDPOINT.lower().startswith("http://"):
                 rejected = self.record_optional_client_error(
                     "S3",
                     "PutObject.sse-c",

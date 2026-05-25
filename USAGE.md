@@ -22,7 +22,6 @@ export MINIO_DIR=/opt/minio-RELEASE.2025-06-13T11-33-47Z
 export MINIO_ENDPOINT=http://minio.example.internal:9000
 export MINIO_ACCESS_KEY=test-access-key
 export MINIO_SECRET_KEY=test-secret-key
-export MINIO_REGION=us-east-1
 
 python3 minio_test_runner.py source --packages ./cmd
 python3 minio_test_runner.py smoke
@@ -127,7 +126,6 @@ test account.
 export MINIO_ENDPOINT=http://minio.example.internal:9000
 export MINIO_ACCESS_KEY=test-access-key
 export MINIO_SECRET_KEY=test-secret-key
-export MINIO_REGION=us-east-1
 ```
 
 The account used for full functional coverage must permit:
@@ -289,9 +287,9 @@ locust -f locustfiles/minio_s3.py MinioLongUser \
 Required environment:
 
 ```bash
+export MINIO_ENDPOINT=http://minio.example.internal:9000
 export MINIO_ACCESS_KEY=test-access-key
 export MINIO_SECRET_KEY=test-secret-key
-export MINIO_REGION=us-east-1
 ```
 
 Additional workload environment:
@@ -404,7 +402,7 @@ TLS certificate error:
 
 - Install the endpoint CA certificate in the validation host trust store.
 - For isolated validation environments, add `--no-verify-tls`; this applies to
-  boto3 calls, health checks, and presigned URL checks.
+  health checks and presigned URL checks.
 
 `AccessDenied`:
 

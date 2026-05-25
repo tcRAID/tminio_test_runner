@@ -492,9 +492,9 @@ def run_functional(args: argparse.Namespace, mode: str) -> int:
         endpoint = args.endpoint.rstrip("/")
         bucket_prefix = args.bucket_prefix or f"minio-test-{dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
         env = {
+            "MINIO_ENDPOINT": endpoint,
             "MINIO_ACCESS_KEY": args.access_key,
             "MINIO_SECRET_KEY": args.secret_key,
-            "MINIO_REGION": args.region,
             "MINIO_VERIFY_TLS": "0" if args.no_verify_tls else "1",
             "MINIO_TEST_BUCKET_PREFIX": bucket_prefix,
             "MINIO_TEST_CLEANUP": "0" if args.no_cleanup else "1",
@@ -582,14 +582,12 @@ def add_functional_args(parser: argparse.ArgumentParser, long_mode: bool = False
     default_endpoint = os.getenv("MINIO_ENDPOINT", "http://127.0.0.1:9000")
     default_access_key = os.getenv("MINIO_ACCESS_KEY", DEFAULT_ACCESS_KEY)
     default_secret_key = os.getenv("MINIO_SECRET_KEY", DEFAULT_SECRET_KEY)
-    default_region = os.getenv("MINIO_REGION", "us-east-1")
     parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="directory for reports")
     parser.add_argument("--keep-workdir", action="store_true", help="preserve work files after successful runs")
     parser.add_argument("--locustfile", default=str(DEFAULT_LOCUSTFILE), help="Locust file to execute")
     parser.add_argument("--endpoint", default=default_endpoint, help="running MinIO/S3 endpoint")
     parser.add_argument("--access-key", default=default_access_key, help="S3 access key; defaults from MINIO_ACCESS_KEY")
     parser.add_argument("--secret-key", default=default_secret_key, help="S3 secret key; defaults from MINIO_SECRET_KEY")
-    parser.add_argument("--region", default=default_region)
     parser.add_argument("--no-verify-tls", action="store_true", help="disable TLS certificate verification")
     parser.add_argument("--bucket-prefix", help="bucket prefix for validation-created buckets")
     parser.add_argument("--no-cleanup", action="store_true", help="preserve validation-created buckets in the cluster")
