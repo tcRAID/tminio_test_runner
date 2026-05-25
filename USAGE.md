@@ -154,17 +154,12 @@ certificate during validation, the command can include:
 python3 minio_test_runner.py smoke --no-verify-tls
 ```
 
-<<<<<<< HEAD
-## Source Validation
-
-=======
 When the endpoint uses plain HTTP, smoke mode verifies that SSE-C requests are
 rejected with MinIO's expected secure-transport error instead of attempting the
 HTTPS-only SSE-C read-back path.
 
 ## Source Validation
 
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 Source validation builds the MinIO server binary and runs Go tests.
 
 ```bash
@@ -408,12 +403,8 @@ Endpoint cannot be reached:
 TLS certificate error:
 
 - Install the endpoint CA certificate in the validation host trust store.
-<<<<<<< HEAD
-- For isolated validation environments, add `--no-verify-tls`.
-=======
 - For isolated validation environments, add `--no-verify-tls`; this applies to
   boto3 calls, health checks, and presigned URL checks.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 `AccessDenied`:
 

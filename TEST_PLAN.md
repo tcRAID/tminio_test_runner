@@ -71,13 +71,8 @@ case procedures.
 | `SMK-004` | Multipart upload | Create upload, upload parts, complete, read-back hash, abort upload | Multipart upload lifecycle |
 | `SMK-005` | Versioning | Enable versioning, read by version ID, delete marker creation, list versions | Bucket versioning and versioned object operations |
 | `SMK-006` | Presigned URL and policy | Presigned GET, presigned PUT, public-read bucket policy, anonymous GET | Presigned URL support and bucket policy updates |
-<<<<<<< HEAD
-| `SMK-007` | Bucket configuration | Bucket tagging, CORS, lifecycle put/get | Bucket tagging, CORS, and lifecycle permissions |
-| `SMK-008` | SSE-C | SSE-C put/get succeeds; access without customer key is rejected | SSE-C object access |
-=======
 | `SMK-007` | Bucket configuration | Bucket tagging, lifecycle put/get, and CORS when implemented | Bucket tagging, lifecycle, and optional CORS permissions |
 | `SMK-008` | SSE-C | HTTPS: SSE-C put/get succeeds and access without customer key is rejected. HTTP: SSE-C is rejected as requiring secure transport. | SSE-C object access or secure-transport rejection |
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 | `SMK-009` | Object lock | Object-lock bucket, governance retention, legal hold, bypass governance delete | Object lock, retention, legal hold, governance bypass |
 | `SMK-010` | Smoke report | Exit code, `summary.md`, `report.json`, Locust HTML/CSV output, secret redaction | Runner reporting and evidence generation |
 
@@ -187,19 +182,11 @@ Required account permissions:
 - object tagging
 - bucket tagging
 - bucket policy
-<<<<<<< HEAD
-- bucket CORS
-- bucket lifecycle
-- bucket versioning
-- object lock governance and legal hold
-- SSE-C put, get, and head
-=======
 - bucket CORS when the target endpoint implements the CORS API
 - bucket lifecycle
 - bucket versioning
 - object lock governance and legal hold
 - SSE-C put, get, and head for HTTPS endpoints
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 Expected result:
 
@@ -656,21 +643,13 @@ Cleanup:
 Purpose:
 
 - Validate bucket-level configuration APIs used by applications and operators:
-<<<<<<< HEAD
-  tagging, CORS, and lifecycle.
-=======
   tagging, lifecycle, and CORS when the target endpoint implements CORS.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 Pre-config/setup:
 
 - Complete [Functional Test Setup](#functional-test-setup).
-<<<<<<< HEAD
-- Test account must allow bucket tagging, CORS, and lifecycle operations.
-=======
 - Test account must allow bucket tagging and lifecycle operations.
 - Test account must allow CORS operations when the endpoint implements CORS.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 Test steps:
 
@@ -678,23 +657,15 @@ Test steps:
 2. Put bucket tags.
 3. Read bucket tags and verify expected tag.
 4. Put bucket CORS configuration.
-<<<<<<< HEAD
-5. Read bucket CORS configuration.
-=======
 5. If CORS is implemented, read bucket CORS configuration.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 6. Put lifecycle configuration for `tmp/`.
 7. Read lifecycle configuration.
 
 Expected result:
 
 - Bucket tag set includes the expected tag.
-<<<<<<< HEAD
-- CORS configuration contains one rule.
-=======
 - CORS configuration contains one rule, or the endpoint returns `501` or
   `NotImplemented`.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 - Lifecycle configuration contains one enabled rule.
 
 Cleanup:
@@ -709,39 +680,20 @@ Cleanup:
 Purpose:
 
 - Validate SSE-C encrypted object write/read behavior and confirm access
-<<<<<<< HEAD
-  without the customer key is rejected.
-=======
   without the customer key is rejected on HTTPS endpoints. On plain HTTP
   endpoints, validate that MinIO rejects SSE-C because secure transport is
   required.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 Pre-config/setup:
 
 - Complete [Functional Test Setup](#functional-test-setup).
-<<<<<<< HEAD
-- Test account must allow SSE-C put, get, and head.
-=======
 - HTTPS endpoints: test account must allow SSE-C put, get, and head.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 Test steps:
 
 1. Create a validation bucket.
 2. Generate a 256-bit customer key.
 3. Put `encrypted/customer-key.bin` with SSE-C headers.
-<<<<<<< HEAD
-4. Get the object with the same SSE-C key.
-5. Compare the downloaded body.
-6. Attempt `HeadObject` without the SSE-C key.
-
-Expected result:
-
-- Put with SSE-C succeeds.
-- Get with the same customer key returns the original body.
-- Head without the customer key fails with `400` or `InvalidRequest`.
-=======
 4. On HTTP endpoints, confirm the put is rejected with `400` or
    `InvalidRequest`.
 5. On HTTPS endpoints, get the object with the same SSE-C key.
@@ -754,7 +706,6 @@ Expected result:
 - HTTPS endpoints accept SSE-C put/get.
 - HTTPS endpoints reject head without the customer key with `400` or
   `InvalidRequest`.
->>>>>>> 1bf4e1d (Align validation docs with runner behavior)
 
 Cleanup:
 
