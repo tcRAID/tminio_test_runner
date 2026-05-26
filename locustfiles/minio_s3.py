@@ -5,15 +5,12 @@ import datetime as dt
 import hashlib
 import json
 import os
-import random
 import ssl
-import threading
 import time
 import traceback
 import urllib.parse
 import urllib.request
 import uuid
-from collections import Counter
 from typing import Any, Callable
 
 import boto3
@@ -53,15 +50,20 @@ class S3Mixin:
     abstract = True
     wait_time = between(0.1, 0.5)
 
+    def endpoint(self) -> str:
+        return ENDPOINT or str(getattr(self, "host", "")).rstrip("/")
+
     def on_start(self) -> None:
-        if not ENDPOINT or not ACCESS_KEY or not SECRET_KEY:
-            raise TestFailure("MINIO_ENDPOINT, MINIO_ACCESS_KEY, and MINIO_SECRET_KEY must be set")
+        if not self.endpoint() or not ACCESS_KEY or not SECRET_KEY:
+            raise TestFailure(
+                "MINIO_ENDPOINT or Locust --host, plus MINIO_ACCESS_KEY and MINIO_SECRET_KEY, must be set"
+            )
         self.client = self.new_client()
 
     def new_client(self) -> Any:
         return boto3.client(
             "s3",
-            endpoint_url=ENDPOINT,
+            endpoint_url=self.endpoint(),
             aws_access_key_id=ACCESS_KEY,
             aws_secret_access_key=SECRET_KEY,
             config=S3_CLIENT_CONFIG,
@@ -186,7 +188,7 @@ class S3Mixin:
 
     def health_checks(self) -> None:
         for path in ("/minio/health/live", "/minio/health/ready"):
-            url = f"{ENDPOINT}{path}"
+            url = f"{self.endpoint()}{path}"
 
             def _read() -> int:
                 with urllib.request.urlopen(url, timeout=10, context=URLLIB_CONTEXT) as response:
@@ -429,7 +431,7 @@ class S3Mixin:
             self.record(
                 "S3", "PutBucketPolicy", lambda: self.client.put_bucket_policy(Bucket=bucket, Policy=json.dumps(policy))
             )
-            public_body = self.read_url(f"{ENDPOINT}/{bucket}/{key}")
+            public_body = self.read_url(f"{self.endpoint()}/{bucket}/{key}")
             self.check("bucket-policy-public-read", public_body == body, "anonymous policy GET mismatch")
         finally:
             self.cleanup_bucket(bucket)
@@ -517,7 +519,7 @@ class S3Mixin:
                     SSECustomerKey=customer_key,
                 )
 
-            if ENDPOINT.lower().startswith("http://"):
+            if self.endpoint().lower().startswith("http://"):
                 rejected = self.record_optional_client_error(
                     "S3",
                     "PutObject.sse-c",
@@ -642,168 +644,3 @@ class MinioSmokeUser(S3Mixin, User):
             runner = self.environment.runner
             if runner:
                 runner.quit()
-
-
-class MinioLongUser(S3Mixin, User):
-    abstract = False
-    wait_time = between(0.05, 0.5)
-
-    def on_start(self) -> None:
-        super().on_start()
-        self.bucket = self.create_bucket("long")
-        self.record(
-            "S3",
-            "PutBucketVersioning.long",
-            lambda: self.client.put_bucket_versioning(
-                Bucket=self.bucket,
-                VersioningConfiguration={"Status": "Enabled"},
-            ),
-        )
-        self.known: dict[str, str] = {}
-        self.stats: Counter[str] = Counter()
-        self.lock = threading.Lock()
-
-    def on_stop(self) -> None:
-        self.cleanup_bucket(getattr(self, "bucket", ""))
-
-    def remember(self, key: str, sha: str) -> None:
-        with self.lock:
-            self.known[key] = sha
-            if len(self.known) > LONG_OBJECT_LIMIT:
-                for victim in list(self.known.keys())[: max(1, LONG_OBJECT_LIMIT // 10)]:
-                    self.known.pop(victim, None)
-
-    def choose_key(self) -> str | None:
-        with self.lock:
-            if not self.known:
-                return None
-            return random.choice(list(self.known.keys()))
-
-    @task(35)
-    def put_object(self) -> None:
-        size = random.choice([0, 1, 128, 4096, 65536, 1048576])
-        body = os.urandom(size)
-        sha = hashlib.sha256(body).hexdigest()
-        key = f"load/{uuid.uuid4().hex}.bin"
-        self.record(
-            "S3",
-            "PutObject.long",
-            lambda: self.client.put_object(Bucket=self.bucket, Key=key, Body=body, Metadata={"sha256": sha}),
-            len(body),
-        )
-        self.remember(key, sha)
-        self.stats["put"] += 1
-
-    @task(25)
-    def get_object(self) -> None:
-        key = self.choose_key()
-        if not key:
-            return
-        obj = self.record("S3", "GetObject.long", lambda: self.client.get_object(Bucket=self.bucket, Key=key))
-        got = obj["Body"].read()
-        expected = obj.get("Metadata", {}).get("sha256")
-        if expected:
-            self.check(
-                "long-get-sha256",
-                hashlib.sha256(got).hexdigest() == expected,
-                f"hash mismatch for {key}",
-            )
-        self.stats["get"] += 1
-
-    @task(10)
-    def head_object(self) -> None:
-        key = self.choose_key()
-        if key:
-            self.record("S3", "HeadObject.long", lambda: self.client.head_object(Bucket=self.bucket, Key=key))
-            self.stats["head"] += 1
-
-    @task(10)
-    def list_objects(self) -> None:
-        self.record(
-            "S3",
-            "ListObjectsV2.long",
-            lambda: self.client.list_objects_v2(Bucket=self.bucket, Prefix="load/", MaxKeys=100),
-        )
-        self.stats["list"] += 1
-
-    @task(8)
-    def copy_object(self) -> None:
-        key = self.choose_key()
-        if not key:
-            return
-        copy_key = f"copy/{uuid.uuid4().hex}.bin"
-        self.record(
-            "S3",
-            "CopyObject.long",
-            lambda: self.client.copy_object(
-                Bucket=self.bucket, Key=copy_key, CopySource={"Bucket": self.bucket, "Key": key}
-            ),
-        )
-        head = self.record(
-            "S3", "HeadObject.long-copy", lambda: self.client.head_object(Bucket=self.bucket, Key=copy_key)
-        )
-        sha = head.get("Metadata", {}).get("sha256")
-        if sha:
-            self.remember(copy_key, sha)
-        self.stats["copy"] += 1
-
-    @task(5)
-    def delete_object(self) -> None:
-        key = self.choose_key()
-        if not key:
-            return
-        self.record("S3", "DeleteObject.long", lambda: self.client.delete_object(Bucket=self.bucket, Key=key))
-        with self.lock:
-            self.known.pop(key, None)
-        self.stats["delete"] += 1
-
-    @task(5)
-    def multipart_upload(self) -> None:
-        key = f"multipart/{uuid.uuid4().hex}.bin"
-        part1 = os.urandom(5 * 1024 * 1024)
-        part2 = os.urandom(random.choice([1, 1024, 1024 * 1024]))
-        upload = self.record(
-            "S3",
-            "CreateMultipartUpload.long",
-            lambda: self.client.create_multipart_upload(Bucket=self.bucket, Key=key),
-        )
-        parts = []
-        for number, body in ((1, part1), (2, part2)):
-            response = self.record(
-                "S3",
-                "UploadPart.long",
-                lambda number=number, body=body: self.client.upload_part(
-                    Bucket=self.bucket,
-                    Key=key,
-                    UploadId=upload["UploadId"],
-                    PartNumber=number,
-                    Body=body,
-                ),
-                len(body),
-            )
-            parts.append({"ETag": response["ETag"], "PartNumber": number})
-        self.record(
-            "S3",
-            "CompleteMultipartUpload.long",
-            lambda: self.client.complete_multipart_upload(
-                Bucket=self.bucket,
-                Key=key,
-                UploadId=upload["UploadId"],
-                MultipartUpload={"Parts": parts},
-            ),
-        )
-        self.remember(key, hashlib.sha256(part1 + part2).hexdigest())
-        self.stats["multipart"] += 1
-
-    @task(2)
-    def bucket_tagging(self) -> None:
-        self.record(
-            "S3",
-            "PutBucketTagging.long",
-            lambda: self.client.put_bucket_tagging(
-                Bucket=self.bucket,
-                Tagging={"TagSet": [{"Key": "last_update", "Value": uuid.uuid4().hex[:12]}]},
-            ),
-        )
-        self.record("S3", "GetBucketTagging.long", lambda: self.client.get_bucket_tagging(Bucket=self.bucket))
-        self.stats["tagging"] += 1

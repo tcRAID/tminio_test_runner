@@ -1,93 +1,34 @@
 # MinIO Validation Runner Execution Guide
 
-This guide defines the execution procedure for the MinIO validation runner.
-The runner validates a MinIO source release and an existing MinIO/S3 endpoint
-through source build checks, Go package tests, functional S3 correctness
-checks, and long-running mixed S3 workloads.
+This package has two entry points:
 
-## Execution Summary
-
-The standard validation execution prepares the runner environment, targets the
-MinIO source release, targets the MinIO/S3 endpoint, then executes source and
-functional validation.
-
-```bash
-cd /opt/tminio_test_runner
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install -r minio-test-requirements.txt
-
-export MINIO_DIR=/opt/minio-RELEASE.2025-06-13T11-33-47Z
-export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=test-access-key
-export MINIO_SECRET_KEY=test-secret-key
-
-python3 minio_test_runner.py source --packages ./cmd
-python3 minio_test_runner.py smoke
-```
-
-## Validation Profiles
-
-| Profile | Command | Coverage |
-| --- | --- | --- |
-| Source package validation | `python3 minio_test_runner.py source --packages ./cmd` | MinIO build plus focused Go package tests |
-| Full source validation | `python3 minio_test_runner.py source` | MinIO build plus Go package tests across `./...` |
-| Functional S3 validation | `python3 minio_test_runner.py smoke` | Single-user correctness coverage across core S3 and bucket behavior |
-| Long-running S3 validation | `python3 minio_test_runner.py long --duration 12h --users 8` | Extended mixed S3 workload with repeated correctness checks |
-
-Smoke mode is intentionally single-user and deterministic. Long mode covers
-concurrent and extended-duration workload behavior.
+- `minio_test_runner.py`: source validation and local smoke validation. The
+  user supplies the MinIO source path. The runner builds MinIO and, for smoke,
+  starts a temporary local MinIO server.
+- `longrun/minio_long.py`: long-running Locust workload. The user supplies the
+  MinIO/S3 endpoint and credentials directly to Locust through environment and
+  `--host`.
 
 ## Package Layout
-
-The validation package contains these files and directories:
 
 ```text
 tminio_test_runner/
   locustfiles/
     minio_s3.py
+  longrun/
+    minio_long.py
   minio_test_runner.py
   minio-test-requirements.txt
   README.md
+  END_TO_END_TEST_EXAMPLE.md
   USAGE.md
   TEST_PLAN.md
   minio-testing.md
 ```
 
-The MinIO source tree is external to this package. Source validation targets
-the release path supplied through `MINIO_DIR` or `--minio-dir`.
+The MinIO source tree is external to this package.
 
-## Platform Requirements
-
-The documented execution environment is Ubuntu 22.
-
-Base packages:
-
-```bash
-sudo apt update
-sudo apt install -y python3 python3-venv git ca-certificates build-essential curl
-```
-
-Source validation requires Go compatible with the MinIO source release. For
-the referenced release, `go.mod` declares:
-
-```text
-go 1.24.0
-toolchain go1.24.2
-```
-
-Runtime verification:
-
-```bash
-go version
-python3 --version
-python3 minio_test_runner.py --help
-```
-
-## Python Runtime
-
-The runner uses an isolated Python virtual environment.
+## Runtime Setup
 
 ```bash
 cd /opt/tminio_test_runner
@@ -97,213 +38,112 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -r minio-test-requirements.txt
 ```
 
-Installed runtime dependencies:
+Required host tools:
 
-- `boto3`: S3 API client used by the Locust workload.
-- `locust`: workload execution and reporting framework.
-
-## Source Target Configuration
-
-Set the MinIO source directory under validation:
-
-```bash
-export MINIO_DIR=/opt/minio-RELEASE.2025-06-13T11-33-47Z
-```
-
-The directory must contain `go.mod`. If `MINIO_DIR` is not set, the runner
-looks for an optional co-located release directory:
-
-```text
-minio-RELEASE.2025-06-13T11-33-47Z/
-```
-
-## Endpoint And Account Configuration
-
-Functional validation requires a reachable MinIO/S3 endpoint and a dedicated
-test account.
-
-```bash
-export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=test-access-key
-export MINIO_SECRET_KEY=test-secret-key
-```
-
-The account used for full functional coverage must permit:
-
-- bucket create, list, delete, and head
-- object put, get, head, delete, list, and copy
-- multipart upload create, upload part, complete, and abort
-- object tagging
-- bucket tagging
-- bucket policy
-- bucket CORS when the target endpoint implements the CORS API
-- bucket lifecycle
-- bucket versioning
-- object lock governance and legal hold
-- SSE-C put, get, and head for HTTPS endpoints
-
-Command-line credential flags are accepted by the runner. Values passed through
-`--access-key` and `--secret-key` are redacted from `report.json`.
-
-TLS verification is enabled by default. For endpoints using a self-signed
-certificate during validation, the command can include:
-
-```bash
-python3 minio_test_runner.py smoke --no-verify-tls
-```
-
-When the endpoint uses plain HTTP, smoke mode verifies that SSE-C requests are
-rejected with MinIO's expected secure-transport error instead of attempting the
-HTTPS-only SSE-C read-back path.
+- Python 3
+- Go compatible with the MinIO source tree under test
+- `locust` and `boto3` from `minio-test-requirements.txt`
 
 ## Source Validation
 
-Source validation builds the MinIO server binary and runs Go tests.
+Source validation builds the MinIO server binary and runs MinIO's own Go tests.
 
 ```bash
-python3 minio_test_runner.py source
+python3 minio_test_runner.py source --minio-dir /opt/minio --packages ./cmd
 ```
 
-Profile variants:
+Common variants:
 
 ```bash
-python3 minio_test_runner.py source --packages ./cmd
-python3 minio_test_runner.py source --packages ./cmd ./internal/...
-python3 minio_test_runner.py source --run TestIAM --packages ./cmd
-python3 minio_test_runner.py source --timeout 90m
-python3 minio_test_runner.py source --race --packages ./cmd
+python3 minio_test_runner.py source --minio-dir /opt/minio
+python3 minio_test_runner.py source --minio-dir /opt/minio --packages ./cmd ./internal/...
+python3 minio_test_runner.py source --minio-dir /opt/minio --run TestIAM --packages ./cmd
+python3 minio_test_runner.py source --minio-dir /opt/minio --race --packages ./cmd
 ```
 
-The `source` profile executes:
+The source profile executes:
 
 - `go env`
-- MinIO `go build`
-- `go test -count=1 -tags kqueue,dev -v`
+- `go build -tags <build-tags> -trimpath`
+- `go test -count=1 -timeout <timeout> -tags <test-tags> -v <packages>`
 - `go test -race` when `--race` is present
 
-Acceptance criteria:
+Build outputs are written under `test-reports/<run>/work` and removed after a
+passing run unless `--keep-workdir` is used.
 
-- All runner steps exit with code `0`.
-- `summary.md` reports `PASS`.
-- `report.json` contains `"passed": true`.
+## Local Smoke Validation
 
-## Functional Smoke Validation
-
-Smoke validation executes a deterministic single-user S3 correctness suite
-against the configured MinIO/S3 endpoint.
-
-```bash
-python3 minio_test_runner.py smoke
-```
-
-Connection settings can also be supplied explicitly:
+Smoke validation no longer targets a user-provided endpoint. It builds MinIO
+from `--minio-dir`, starts that binary on `127.0.0.1` with a temporary local
+filesystem drive, runs the single-user smoke workload, stops MinIO, and removes
+the temporary data directory.
 
 ```bash
-python3 minio_test_runner.py smoke \
-  --endpoint http://minio.example.internal:9000
+python3 minio_test_runner.py smoke --minio-dir /opt/minio
 ```
 
-Default profile:
-
-- `--users 1`
-- `--spawn-rate 1`
-- `--duration 10m`
-- cleanup enabled
-
-Operational flags:
+Useful options:
 
 ```bash
-python3 minio_test_runner.py smoke --bucket-prefix validation-smoke
-python3 minio_test_runner.py smoke --no-cleanup
-python3 minio_test_runner.py smoke --no-verify-tls
-python3 minio_test_runner.py smoke --report-dir ./reports
+python3 minio_test_runner.py smoke --minio-dir /opt/minio --bucket-prefix validation-smoke
+python3 minio_test_runner.py smoke --minio-dir /opt/minio --duration 10m
+python3 minio_test_runner.py smoke --minio-dir /opt/minio --report-dir ./reports
+python3 minio_test_runner.py smoke --minio-dir /opt/minio --keep-workdir
 ```
 
-Acceptance criteria:
+Local smoke behavior:
 
-- Locust failure count is `0`.
-- All S3 correctness assertions pass.
-- `summary.md` reports `PASS`.
-- `report.json` contains `"passed": true`.
+- The runner chooses free localhost API and console ports.
+- The runner sets local root credentials automatically unless `--access-key`
+  or `--secret-key` are supplied.
+- Smoke always runs with one Locust user.
+- Bucket cleanup is enabled inside the smoke workload.
+- The local MinIO process is terminated in the runner `finally` path.
+- The local MinIO data directory is removed even when smoke fails.
 
-## Long-Running Functional Validation
+Smoke report steps include:
 
-Long mode runs an extended mixed S3 workload. Each Locust user creates an
-isolated test bucket, enables versioning, and continuously performs weighted
-object and bucket operations with correctness checks.
+- `go-build-minio`
+- `local-minio-start`
+- `locust-smoke`
+- `local-minio-stop`
 
-```bash
-python3 minio_test_runner.py long \
-  --endpoint "$MINIO_ENDPOINT" \
-  --duration 12h \
-  --users 8 \
-  --spawn-rate 1
-```
+## Long-Running Validation
 
-Profile variants:
-
-```bash
-python3 minio_test_runner.py long --duration 2h --users 4
-python3 minio_test_runner.py long --duration 12h --users 16 --spawn-rate 2
-python3 minio_test_runner.py long --bucket-prefix nightly-$(date +%Y%m%d)
-python3 minio_test_runner.py long --locust-arg=--loglevel --locust-arg=DEBUG
-```
-
-Acceptance criteria:
-
-- The run completes the configured duration.
-- Locust failure count is `0`.
-- Object hash verification checks pass.
-- `summary.md` reports `PASS`.
-- `report.json` contains `"passed": true`.
-
-## Direct Locust Execution
-
-The Locust workload can be executed without the wrapper when an external
-Locust framework owns process management.
-
-Smoke class:
-
-```bash
-locust -f locustfiles/minio_s3.py MinioSmokeUser \
-  --headless \
-  --host "$MINIO_ENDPOINT" \
-  --users 1 \
-  --spawn-rate 1 \
-  --run-time 10m
-```
-
-Long-running class:
-
-```bash
-locust -f locustfiles/minio_s3.py MinioLongUser \
-  --headless \
-  --host "$MINIO_ENDPOINT" \
-  --users 8 \
-  --spawn-rate 1 \
-  --run-time 12h
-```
-
-Required environment:
+Long-running validation is intentionally outside `minio_test_runner.py`. Run it
+directly with Locust from `longrun/minio_long.py` against an endpoint you
+provide.
 
 ```bash
 export MINIO_ENDPOINT=http://minio.example.internal:9000
 export MINIO_ACCESS_KEY=test-access-key
 export MINIO_SECRET_KEY=test-secret-key
+
+locust -f longrun/minio_long.py MinioLongUser \
+  --headless \
+  --host "$MINIO_ENDPOINT" \
+  --users 8 \
+  --spawn-rate 1 \
+  --run-time 12h \
+  --html longrun.html \
+  --csv longrun
 ```
 
-Additional workload environment:
+Additional long-run environment:
 
 ```bash
-export MINIO_VERIFY_TLS=0
 export MINIO_TEST_BUCKET_PREFIX=validation
-export MINIO_TEST_CLEANUP=0
+export MINIO_TEST_CLEANUP=1
 export MINIO_LONG_OBJECT_LIMIT=500
+export MINIO_VERIFY_TLS=0
 ```
+
+`MINIO_ENDPOINT` is preferred by the boto3 client. `--host` is also accepted as
+the Locust host and is used when `MINIO_ENDPOINT` is not set.
 
 ## Validation Evidence
 
-The wrapper creates a timestamped report directory for every run:
+`minio_test_runner.py` creates timestamped reports:
 
 ```text
 test-reports/
@@ -318,51 +158,28 @@ test-reports/
     locust-smoke_stats.csv
     locust-smoke_failures.csv
     logs/
-  20260521-220000-long/
-    report.json
-    summary.md
-    locust-long.html
-    locust-long_stats.csv
-    locust-long_failures.csv
-    logs/
 ```
 
-Evidence files:
-
-- `summary.md`: human-readable step summary and pass/fail result.
-- `report.json`: machine-readable validation result for automation.
-- `locust-*.html`: Locust HTML report.
-- `locust-*_stats.csv`: latency, RPS, and failure statistics.
-- `locust-*_failures.csv`: Locust failure details.
-- `locust-*_exceptions.csv`: Locust exception details when emitted.
-- `logs/`: command output captured by the wrapper.
-
-Process exit codes:
-
-- `0`: validation passed.
-- non-zero: source failure, functional failure, runner error, or timeout.
+Long-run evidence is produced by Locust from the `--html` and `--csv` options
+you pass to the `locust` command.
 
 ## Cleanup
 
-Functional validation creates validation buckets and attempts to delete them
-during normal completion. Bucket names include the configured prefix:
+Source validation does not modify the MinIO source tree.
 
-```text
-<bucket-prefix>-<test-kind>-<random-suffix>
-```
+Local smoke cleanup is automatic:
 
-When `--no-cleanup` is set, or when a run is interrupted, buckets with the run
-prefix remain available for inspection and require manual removal.
+- The local MinIO process is stopped.
+- The temporary filesystem drive directory is removed.
+- Smoke-created buckets are removed by the workload before the server stops.
+- Passing runner work directories are removed unless `--keep-workdir` is set.
 
-Manual cleanup procedure:
+Long-run cleanup depends on the endpoint and Locust process lifetime:
 
-1. Identify the bucket prefix from `report.json`.
-2. List buckets matching the prefix.
-3. Delete object versions, delete markers, current objects, and incomplete
-   multipart uploads.
-4. Remove bucket policy, lifecycle, CORS, tagging, legal hold, and retention
-   configuration where present.
-5. Delete the buckets.
+- With `MINIO_TEST_CLEANUP=1`, each Locust user attempts to delete its bucket on
+  stop.
+- If Locust is interrupted or a user crashes, remove buckets matching
+  `MINIO_TEST_BUCKET_PREFIX` manually.
 
 ## Troubleshooting
 
@@ -379,44 +196,21 @@ Resolution:
 python3 -m pip install -r minio-test-requirements.txt
 ```
 
-Missing credentials:
+Local smoke does not start:
 
-```text
-MinIO credentials are required. Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY
-```
+- Confirm `--minio-dir` points to a MinIO source tree containing `go.mod`.
+- Inspect `logs/go-build-minio.log`.
+- Inspect `logs/local-minio.log`.
+- Confirm localhost ports are not blocked by the host firewall.
 
-Resolution:
+Long-run endpoint cannot be reached:
 
-```bash
-export MINIO_ACCESS_KEY=test-access-key
-export MINIO_SECRET_KEY=test-secret-key
-```
+- Confirm `MINIO_ENDPOINT` or `--host` includes `http://` or `https://`.
+- Confirm the validation host can reach the endpoint.
+- Confirm `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY` are set.
 
-Endpoint cannot be reached:
-
-- `MINIO_ENDPOINT` includes `http://` or `https://`.
-- The validation host can reach the endpoint.
-- DNS, firewall, and load balancer routing allow access.
-
-TLS certificate error:
+TLS certificate error during long run:
 
 - Install the endpoint CA certificate in the validation host trust store.
-- For isolated validation environments, add `--no-verify-tls`; this applies to
-  health checks and presigned URL checks.
-
-`AccessDenied`:
-
-- Confirm that the test account has the permissions listed in this guide.
-- The related validation case fails when the endpoint or account cannot
-  exercise the required S3 feature.
-
-Object lock validation failure:
-
-- Confirm that the cluster supports object lock.
-- Confirm that the test account has object lock, retention, legal hold, and
-  governance bypass permissions.
-
-Buckets remain after an interrupted run:
-
-- Search for buckets using the run's `--bucket-prefix`.
-- Execute the manual cleanup procedure in this guide.
+- For isolated validation environments, set `MINIO_VERIFY_TLS=0` for urllib
+  health and presigned URL checks.

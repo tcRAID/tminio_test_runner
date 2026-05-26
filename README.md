@@ -1,55 +1,62 @@
 # MinIO Validation Runner
 
-This repository packages an external validation runner for MinIO source and
-S3-compatible endpoint verification. The suite validates build readiness,
-source-level Go test results, functional S3 behavior, and long-running mixed
-S3 workload stability against an existing MinIO deployment.
+## Start Here
 
-## Validation Coverage
+Read [END_TO_END_TEST_EXAMPLE.md](END_TO_END_TEST_EXAMPLE.md) and follow the
+commands.
 
-| Validation area | Command |
+Normal flow:
+
+1. Change MinIO source code.
+2. Run `source`.
+3. Run local `smoke`.
+4. Deploy MinIO.
+5. Run Locust long test against the deployed endpoint.
+
+## Entry Points
+
+| Purpose | Command |
 | --- | --- |
-| Source build and focused Go package validation | `python3 minio_test_runner.py source --packages ./cmd` |
-| Full source build and Go package validation | `python3 minio_test_runner.py source` |
-| Functional S3 correctness validation | `python3 minio_test_runner.py smoke` |
-| Long-running S3 correctness and stability validation | `python3 minio_test_runner.py long --duration 12h --users 8` |
+| Source build and Go tests | `python3 minio_test_runner.py source --minio-dir /path/to/minio --packages ./cmd` |
+| Local smoke test | `python3 minio_test_runner.py smoke --minio-dir /path/to/minio` |
+| Long endpoint test | `locust -f longrun/minio_long.py MinioLongUser --host "$MINIO_ENDPOINT"` |
 
-Smoke mode is intentionally single-user and deterministic. Long mode covers
-concurrent and extended-duration workload behavior.
+`source` and `smoke` use a MinIO source path. `smoke` starts and cleans up a
+temporary local MinIO.
 
-## Execution Environment
+`longrun/minio_long.py` uses a deployed endpoint supplied by the user.
+
+## Documents
+
+| File | Use it for |
+| --- | --- |
+| [END_TO_END_TEST_EXAMPLE.md](END_TO_END_TEST_EXAMPLE.md) | Copy-paste run example for source, smoke, deploy, long run |
+| [USAGE.md](USAGE.md) | Command options, reports, cleanup, troubleshooting |
+| [TEST_PLAN.md](TEST_PLAN.md) | Test scope, coverage, expected result |
+| [minio-testing.md](minio-testing.md) | Short validation overview |
+
+## Minimal Commands
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install --upgrade pip
 python3 -m pip install -r minio-test-requirements.txt
 
-export MINIO_DIR=/opt/minio-RELEASE.2025-06-13T11-33-47Z
+python3 minio_test_runner.py source --minio-dir /path/to/minio --packages ./cmd
+python3 minio_test_runner.py smoke --minio-dir /path/to/minio
+```
+
+After deploy:
+
+```bash
 export MINIO_ENDPOINT=http://minio.example.internal:9000
 export MINIO_ACCESS_KEY=test-access-key
 export MINIO_SECRET_KEY=test-secret-key
+
+locust -f longrun/minio_long.py MinioLongUser \
+  --headless \
+  --host "$MINIO_ENDPOINT" \
+  --users 8 \
+  --spawn-rate 1 \
+  --run-time 12h
 ```
-
-## Standard Validation Execution
-
-```bash
-python3 minio_test_runner.py source --packages ./cmd
-python3 minio_test_runner.py smoke
-```
-
-The runner writes validation evidence under `test-reports/` by default,
-including `summary.md`, `report.json`, command logs, and Locust HTML/CSV
-reports for functional runs.
-
-## Package Scope
-
-The package contains the runner, Locust workloads, dependency list, and
-validation documentation. It does not vendor the MinIO source tree. Source
-validation uses `MINIO_DIR` or `--minio-dir` to target the MinIO source release
-under test.
-
-## Documentation
-
-- [USAGE.md](USAGE.md): execution environment, commands, reports, and troubleshooting.
-- [TEST_PLAN.md](TEST_PLAN.md): validation coverage, case procedures, expected results, and cleanup.

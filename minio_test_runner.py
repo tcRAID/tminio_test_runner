@@ -8,21 +8,24 @@ import importlib.util
 import json
 import os
 import pathlib
+import secrets
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
 import traceback
+import urllib.request
 from typing import Any
 
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
-DEFAULT_MINIO_DIR = ROOT_DIR / "minio-RELEASE.2025-06-13T11-33-47Z"
+DEFAULT_MINIO_DIR = ROOT_DIR.parent / "minio"
 DEFAULT_REPORT_DIR = ROOT_DIR / "test-reports"
 DEFAULT_LOCUSTFILE = ROOT_DIR / "locustfiles" / "minio_s3.py"
-DEFAULT_ACCESS_KEY = ""
+DEFAULT_ACCESS_KEY = "tminioadmin"
 DEFAULT_SECRET_KEY = ""
 SENSITIVE_ARG_NAMES = {"--access-key", "--secret-key"}
 
@@ -363,6 +366,139 @@ def build_minio(
     return output
 
 
+@dataclasses.dataclass
+class LocalMinio:
+    process: subprocess.Popen[Any]
+    endpoint: str
+    data_dir: pathlib.Path
+    log_path: pathlib.Path
+    api_port: int
+    console_port: int
+
+
+def find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_local_minio(endpoint: str, proc: subprocess.Popen[Any], timeout: int) -> None:
+    url = f"{endpoint}/minio/health/live"
+    deadline = time.monotonic() + timeout
+    last_error = ""
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise StepError(f"local MinIO exited before becoming healthy with status {proc.returncode}")
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                if response.status == 200:
+                    return
+                last_error = f"health check returned HTTP {response.status}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.5)
+    raise StepError(f"local MinIO did not become healthy within {timeout}s: {last_error}")
+
+
+def start_local_minio(
+    report: Report,
+    binary: pathlib.Path,
+    access_key: str,
+    secret_key: str,
+    startup_timeout: int,
+) -> LocalMinio:
+    started = time.monotonic()
+    data_dir = report.work_dir / "local-minio-data"
+    data_dir.mkdir(parents=True, exist_ok=False)
+    api_port = find_free_port()
+    console_port = find_free_port()
+    while console_port == api_port:
+        console_port = find_free_port()
+    endpoint = f"http://127.0.0.1:{api_port}"
+    log_path = report.log_dir / "local-minio.log"
+    cmd = [
+        str(binary),
+        "server",
+        str(data_dir),
+        "--address",
+        f"127.0.0.1:{api_port}",
+        "--console-address",
+        f"127.0.0.1:{console_port}",
+    ]
+    env = os.environ.copy()
+    env.update(
+        {
+            "MINIO_ROOT_USER": access_key,
+            "MINIO_ROOT_PASSWORD": secret_key,
+            "MINIO_BROWSER": "off",
+        }
+    )
+    proc: subprocess.Popen[Any] | None = None
+    try:
+        log_file = log_path.open("w", encoding="utf-8", errors="replace")
+        try:
+            log_file.write(f"$ {' '.join(cmd)}\n")
+            log_file.write(f"# cwd: {ROOT_DIR}\n\n")
+            log_file.flush()
+            print(f"[command] local-minio-start: {' '.join(cmd)}")
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT_DIR),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                **popen_kwargs(),
+            )
+        finally:
+            log_file.close()
+
+        assert proc is not None
+        wait_for_local_minio(endpoint, proc, startup_timeout)
+    except Exception as exc:
+        if proc is not None:
+            terminate_process(proc)
+        shutil.rmtree(data_dir, ignore_errors=True)
+        report.add(
+            "local-minio-start",
+            "failed",
+            time.monotonic() - started,
+            details={"endpoint": endpoint, "api_port": api_port, "console_port": console_port},
+            error="".join(traceback.format_exception_only(type(exc), exc)).strip(),
+            log_path=log_path,
+        )
+        raise
+
+    report.add(
+        "local-minio-start",
+        "passed",
+        time.monotonic() - started,
+        details={"endpoint": endpoint, "api_port": api_port, "console_port": console_port},
+        log_path=log_path,
+    )
+    return LocalMinio(proc, endpoint, data_dir, log_path, api_port, console_port)
+
+
+def stop_local_minio(report: Report, local: LocalMinio) -> None:
+    started = time.monotonic()
+    error = None
+    try:
+        terminate_process(local.process)
+    except Exception as exc:
+        error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+    shutil.rmtree(local.data_dir, ignore_errors=True)
+    if local.data_dir.exists():
+        error = f"failed to remove local MinIO data directory: {local.data_dir}"
+    report.add(
+        "local-minio-stop",
+        "failed" if error else "passed",
+        time.monotonic() - started,
+        details={"endpoint": local.endpoint, "data_dir": str(local.data_dir)},
+        error=error,
+        log_path=local.log_path,
+    )
+
+
 def run_source(args: argparse.Namespace) -> int:
     report_root = make_report_root(pathlib.Path(args.report_dir), "source")
     report = Report("source", report_root)
@@ -461,23 +597,24 @@ def locust_duration(seconds: int) -> str:
     return f"{seconds}s"
 
 
-def run_functional(args: argparse.Namespace, mode: str) -> int:
-    report_root = make_report_root(pathlib.Path(args.report_dir), mode)
-    report = Report(mode, report_root)
+def run_smoke(args: argparse.Namespace) -> int:
+    report_root = make_report_root(pathlib.Path(args.report_dir), "smoke")
+    report = Report("smoke", report_root)
     locustfile = pathlib.Path(args.locustfile).expanduser().resolve()
-    class_name = "MinioSmokeUser" if mode == "smoke" else "MinioLongUser"
+    class_name = "MinioSmokeUser"
     duration = args.duration
-    csv_prefix = report.root / f"locust-{mode}"
-    html_path = report.root / f"locust-{mode}.html"
-    locust_log_path = report.log_dir / f"locust-{mode}.internal.log"
+    csv_prefix = report.root / "locust-smoke"
+    html_path = report.root / "locust-smoke.html"
+    locust_log_path = report.log_dir / "locust-smoke.internal.log"
+    local_minio: LocalMinio | None = None
     try:
-        if mode == "smoke" and args.users != 1:
-            raise StepError("smoke mode requires --users 1; long mode supports concurrent workloads")
-        if not args.access_key or not args.secret_key:
-            raise StepError(
-                "MinIO credentials are required. Set MINIO_ACCESS_KEY and MINIO_SECRET_KEY, "
-                "or pass --access-key and --secret-key."
-            )
+        if args.users != 1:
+            raise StepError("smoke mode requires --users 1; use longrun/minio_long.py directly for concurrent workloads")
+        minio_dir = resolve_minio_dir(args.minio_dir)
+        access_key = args.access_key or DEFAULT_ACCESS_KEY
+        secret_key = args.secret_key or secrets.token_urlsafe(32)
+        report.metadata["minio_dir"] = str(minio_dir)
+        require_tool("go")
         require_python_module(
             "locust",
             "python3 -m pip install -r minio-test-requirements.txt",
@@ -489,28 +626,35 @@ def run_functional(args: argparse.Namespace, mode: str) -> int:
         if not locustfile.is_file():
             raise StepError(f"Locust file not found: {locustfile}")
 
-        endpoint = args.endpoint.rstrip("/")
+        binary = build_minio(
+            report,
+            minio_dir,
+            report.work_dir / "bin" / "minio",
+            build_tags=args.build_tags,
+        )
+        local_minio = start_local_minio(report, binary, access_key, secret_key, args.startup_timeout)
+        endpoint = local_minio.endpoint
         bucket_prefix = args.bucket_prefix or f"minio-test-{dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
         env = {
             "MINIO_ENDPOINT": endpoint,
-            "MINIO_ACCESS_KEY": args.access_key,
-            "MINIO_SECRET_KEY": args.secret_key,
-            "MINIO_VERIFY_TLS": "0" if args.no_verify_tls else "1",
+            "MINIO_ACCESS_KEY": access_key,
+            "MINIO_SECRET_KEY": secret_key,
+            "MINIO_VERIFY_TLS": "1",
             "MINIO_TEST_BUCKET_PREFIX": bucket_prefix,
-            "MINIO_TEST_CLEANUP": "0" if args.no_cleanup else "1",
-            "MINIO_LONG_OBJECT_LIMIT": str(args.long_object_limit),
+            "MINIO_TEST_CLEANUP": "1",
         }
         report.metadata.update(
             {
                 "endpoint": endpoint,
+                "local_minio": True,
                 "locustfile": str(locustfile),
                 "locust_user_class": class_name,
                 "users": args.users,
                 "spawn_rate": args.spawn_rate,
                 "duration_seconds": duration,
                 "bucket_prefix": bucket_prefix,
-                "cleanup": not args.no_cleanup,
-                "verify_tls": not args.no_verify_tls,
+                "cleanup": True,
+                "verify_tls": True,
             }
         )
 
@@ -546,7 +690,7 @@ def run_functional(args: argparse.Namespace, mode: str) -> int:
 
         run_command(
             report,
-            f"locust-{mode}",
+            "locust-smoke",
             cmd,
             cwd=ROOT_DIR,
             env=env,
@@ -560,6 +704,8 @@ def run_functional(args: argparse.Namespace, mode: str) -> int:
             error="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip(),
         )
     finally:
+        if local_minio is not None:
+            stop_local_minio(report, local_minio)
         if not args.keep_workdir and report.passed():
             shutil.rmtree(report.work_dir, ignore_errors=True)
         report.finish()
@@ -571,28 +717,24 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--minio-dir",
         default=os.getenv("MINIO_DIR", str(DEFAULT_MINIO_DIR)),
-        help="path to the MinIO source directory; defaults from MINIO_DIR or a colocated MinIO release directory",
+        help="path to the MinIO source directory; defaults from MINIO_DIR or ../minio",
     )
     parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="directory for reports")
     parser.add_argument("--keep-workdir", action="store_true", help="preserve work files after successful runs")
     parser.add_argument("--build-tags", default="kqueue", help="Go build tags for building MinIO")
 
 
-def add_functional_args(parser: argparse.ArgumentParser, long_mode: bool = False) -> None:
-    default_endpoint = os.getenv("MINIO_ENDPOINT", "http://127.0.0.1:9000")
-    default_access_key = os.getenv("MINIO_ACCESS_KEY", DEFAULT_ACCESS_KEY)
-    default_secret_key = os.getenv("MINIO_SECRET_KEY", DEFAULT_SECRET_KEY)
-    parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="directory for reports")
-    parser.add_argument("--keep-workdir", action="store_true", help="preserve work files after successful runs")
+def add_smoke_args(parser: argparse.ArgumentParser) -> None:
+    add_common_args(parser)
+    default_access_key = os.getenv("MINIO_ROOT_USER", DEFAULT_ACCESS_KEY)
+    default_secret_key = os.getenv("MINIO_ROOT_PASSWORD", DEFAULT_SECRET_KEY)
     parser.add_argument("--locustfile", default=str(DEFAULT_LOCUSTFILE), help="Locust file to execute")
-    parser.add_argument("--endpoint", default=default_endpoint, help="running MinIO/S3 endpoint")
-    parser.add_argument("--access-key", default=default_access_key, help="S3 access key; defaults from MINIO_ACCESS_KEY")
-    parser.add_argument("--secret-key", default=default_secret_key, help="S3 secret key; defaults from MINIO_SECRET_KEY")
-    parser.add_argument("--no-verify-tls", action="store_true", help="disable TLS certificate verification")
+    parser.add_argument("--access-key", default=default_access_key, help="local MinIO root access key")
+    parser.add_argument("--secret-key", default=default_secret_key, help="local MinIO root secret key")
     parser.add_argument("--bucket-prefix", help="bucket prefix for validation-created buckets")
-    parser.add_argument("--no-cleanup", action="store_true", help="preserve validation-created buckets in the cluster")
     parser.add_argument("--spawn-rate", type=float, default=1.0, help="Locust user spawn rate")
     parser.add_argument("--stop-timeout", type=int, default=30, help="Locust stop timeout in seconds")
+    parser.add_argument("--startup-timeout", type=int, default=60, help="seconds to wait for local MinIO health")
     parser.add_argument(
         "--command-timeout-padding",
         type=int,
@@ -605,22 +747,12 @@ def add_functional_args(parser: argparse.ArgumentParser, long_mode: bool = False
         default=[],
         help="extra raw argument passed to Locust; repeat for multiple args",
     )
-    parser.add_argument(
-        "--long-object-limit",
-        type=int,
-        default=500,
-        help="per-user remembered object limit for the long-running workload",
-    )
-    if long_mode:
-        parser.add_argument("--duration", type=duration_seconds, default=12 * 3600, help="long-run duration, e.g. 12h")
-        parser.add_argument("--users", type=int, default=8, help="Locust user count")
-    else:
-        parser.add_argument("--duration", type=duration_seconds, default=10 * 60, help="smoke max duration, e.g. 10m")
-        parser.add_argument("--users", type=int, default=1, help="Locust user count")
+    parser.add_argument("--duration", type=duration_seconds, default=10 * 60, help="smoke max duration, e.g. 10m")
+    parser.add_argument("--users", type=int, default=1, help="Locust user count")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="MinIO source and S3 endpoint validation runner")
+    parser = argparse.ArgumentParser(description="MinIO source and local smoke validation runner")
     sub = parser.add_subparsers(dest="command", required=True)
 
     source = sub.add_parser("source", help="validate source build and Go tests")
@@ -635,11 +767,8 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--skip-build", action="store_true", help="skip go build")
     source.add_argument("--skip-tests", action="store_true", help="skip go test")
 
-    smoke = sub.add_parser("smoke", help="run functional smoke validation")
-    add_functional_args(smoke)
-
-    long = sub.add_parser("long", help="run long-running functional validation")
-    add_functional_args(long, long_mode=True)
+    smoke = sub.add_parser("smoke", help="build local MinIO and run functional smoke validation")
+    add_smoke_args(smoke)
 
     return parser
 
@@ -651,9 +780,7 @@ def main() -> int:
         if args.command == "source":
             return run_source(args)
         if args.command == "smoke":
-            return run_functional(args, "smoke")
-        if args.command == "long":
-            return run_functional(args, "long")
+            return run_smoke(args)
     except StepError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

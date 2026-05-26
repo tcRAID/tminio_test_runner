@@ -11,6 +11,7 @@ venv/
 # Runner and Locust output
 test-reports/
 reports/
+longrun-reports/
 locust-*.html
 locust-*.log
 locust-*_stats.csv
@@ -19,6 +20,7 @@ locust-*_failures.csv
 locust-*_exceptions.csv
 
 # Optional local MinIO source checkout or release extraction
+minio/
 minio-RELEASE.*/
 
 # OS and editor files
