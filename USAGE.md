@@ -115,9 +115,9 @@ directly with Locust from `longrun/minio_long.py` against an endpoint you
 provide.
 
 ```bash
-export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=test-access-key
-export MINIO_SECRET_KEY=test-secret-key
+export MINIO_ENDPOINT=https://minio.example.internal:9000
+export MINIO_ACCESS_KEY=<access-key>
+export MINIO_SECRET_KEY=<secret-key>
 
 locust -f longrun/minio_long.py MinioLongUser \
   --headless \
@@ -135,7 +135,6 @@ Additional long-run environment:
 export MINIO_TEST_BUCKET_PREFIX=validation
 export MINIO_TEST_CLEANUP=1
 export MINIO_LONG_OBJECT_LIMIT=500
-export MINIO_VERIFY_TLS=0
 ```
 
 `MINIO_ENDPOINT` is preferred by the boto3 client. `--host` is also accepted as
@@ -205,12 +204,10 @@ Local smoke does not start:
 
 Long-run endpoint cannot be reached:
 
-- Confirm `MINIO_ENDPOINT` or `--host` includes `http://` or `https://`.
+- Confirm `MINIO_ENDPOINT` or `--host` includes `https://` for deployed endpoints.
 - Confirm the validation host can reach the endpoint.
 - Confirm `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY` are set.
 
 TLS certificate error during long run:
 
 - Install the endpoint CA certificate in the validation host trust store.
-- For isolated validation environments, set `MINIO_VERIFY_TLS=0` for urllib
-  health and presigned URL checks.

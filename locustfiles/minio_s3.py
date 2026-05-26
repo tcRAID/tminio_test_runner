@@ -3,13 +3,11 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import hashlib
+import http.client
 import json
 import os
-import ssl
 import time
-import traceback
 import urllib.parse
-import urllib.request
 import uuid
 from typing import Any, Callable
 
@@ -21,8 +19,6 @@ from locust import User, between, task
 ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "")
 SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "")
 ENDPOINT = os.getenv("MINIO_ENDPOINT", "").rstrip("/")
-VERIFY_TLS = os.getenv("MINIO_VERIFY_TLS", "1") != "0"
-URLLIB_CONTEXT = None if VERIFY_TLS else ssl._create_unverified_context()
 BUCKET_PREFIX = os.getenv("MINIO_TEST_BUCKET_PREFIX", "minio-test")
 CLEANUP = os.getenv("MINIO_TEST_CLEANUP", "1") != "0"
 LONG_OBJECT_LIMIT = int(os.getenv("MINIO_LONG_OBJECT_LIMIT", "500"))
@@ -46,18 +42,49 @@ def _tags(values: dict[str, str]) -> str:
     return urllib.parse.urlencode(values)
 
 
+def _validated_http_url(url: str) -> urllib.parse.ParseResult:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+        raise TestFailure(f"URL must be absolute HTTP(S): {url}")
+    if parsed.username or parsed.password:
+        raise TestFailure("URL user-info is not allowed")
+    return parsed
+
+
+def _default_port(scheme: str) -> int:
+    return 443 if scheme == "https" else 80
+
+
+def _origin(parsed: urllib.parse.ParseResult) -> tuple[str, str, int]:
+    hostname = parsed.hostname
+    if hostname is None:
+        raise TestFailure("URL hostname is required")
+    return parsed.scheme, hostname.lower(), parsed.port or _default_port(parsed.scheme)
+
+
+def _request_target(parsed: urllib.parse.ParseResult) -> str:
+    target = parsed.path or "/"
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+    return target
+
+
 class S3Mixin:
     abstract = True
     wait_time = between(0.1, 0.5)
 
     def endpoint(self) -> str:
-        return ENDPOINT or str(getattr(self, "host", "")).rstrip("/")
+        return str(getattr(self, "_endpoint", ENDPOINT or str(getattr(self, "host", "")))).rstrip("/")
 
     def on_start(self) -> None:
-        if not self.endpoint() or not ACCESS_KEY or not SECRET_KEY:
+        raw_endpoint = (ENDPOINT or str(getattr(self, "host", ""))).rstrip("/")
+        if not raw_endpoint or not ACCESS_KEY or not SECRET_KEY:
             raise TestFailure(
                 "MINIO_ENDPOINT or Locust --host, plus MINIO_ACCESS_KEY and MINIO_SECRET_KEY, must be set"
             )
+        parsed = _validated_http_url(raw_endpoint)
+        self._endpoint = raw_endpoint
+        self._endpoint_origin = _origin(parsed)
         self.client = self.new_client()
 
     def new_client(self) -> Any:
@@ -128,13 +155,41 @@ class S3Mixin:
 
         return self.record(request_type, name, _optional)
 
+    def http_request(self, url: str, method: str = "GET", data: bytes | None = None, timeout: int = 30) -> tuple[int, bytes]:
+        parsed = _validated_http_url(url)
+        if _origin(parsed) != self._endpoint_origin:
+            raise TestFailure("refusing cross-origin HTTP request")
+        connection_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        conn = connection_cls(parsed.hostname, parsed.port or _default_port(parsed.scheme), timeout=timeout)
+        headers = {"Content-Length": str(len(data))} if data is not None else {}
+        try:
+            conn.request(method, _request_target(parsed), body=data, headers=headers)
+            response = conn.getresponse()
+            return response.status, response.read()
+        finally:
+            conn.close()
+
     def read_url(self, url: str, method: str = "GET", data: bytes | None = None) -> bytes:
         def _read() -> bytes:
-            req = urllib.request.Request(url, data=data, method=method)
-            with urllib.request.urlopen(req, timeout=30, context=URLLIB_CONTEXT) as response:
-                return response.read()
+            status, body = self.http_request(url, method=method, data=data, timeout=30)
+            if status >= 400:
+                raise TestFailure(f"HTTP {method} returned status {status}")
+            return body
 
         return self.record("HTTP", f"presigned-{method}", _read)
+
+    def cleanup_warning(self, bucket: str, action: str, exc: Exception) -> None:
+        print(f"cleanup warning for {bucket} during {action}: {type(exc).__name__}: {exc}", flush=True)
+
+    def handle_cleanup_error(self, bucket: str, action: str, exc: Exception, expected: set[str]) -> None:
+        if isinstance(exc, ClientError):
+            error = exc.response.get("Error", {})
+            metadata = exc.response.get("ResponseMetadata", {})
+            code = str(error.get("Code", ""))
+            status = str(metadata.get("HTTPStatusCode", ""))
+            if code in expected or status in expected:
+                return
+        self.cleanup_warning(bucket, action, exc)
 
     def cleanup_bucket(self, bucket: str) -> None:
         if not CLEANUP:
@@ -144,8 +199,10 @@ class S3Mixin:
             uploads = c.list_multipart_uploads(Bucket=bucket).get("Uploads", [])
             for upload in uploads:
                 c.abort_multipart_upload(Bucket=bucket, Key=upload["Key"], UploadId=upload["UploadId"])
-        except Exception:
-            pass
+        except ClientError as exc:
+            self.handle_cleanup_error(bucket, "abort multipart uploads", exc, {"NoSuchBucket", "404"})
+        except Exception as exc:
+            self.cleanup_warning(bucket, "abort multipart uploads", exc)
         try:
             paginator = c.get_paginator("list_object_versions")
             for page in paginator.paginate(Bucket=bucket):
@@ -156,30 +213,39 @@ class S3Mixin:
                     objects.append({"Key": item["Key"], "VersionId": item["VersionId"]})
                 for index in range(0, len(objects), 1000):
                     c.delete_objects(Bucket=bucket, Delete={"Objects": objects[index : index + 1000]})
-        except Exception:
-            pass
+        except ClientError as exc:
+            self.handle_cleanup_error(bucket, "delete object versions", exc, {"NoSuchBucket", "404"})
+        except Exception as exc:
+            self.cleanup_warning(bucket, "delete object versions", exc)
         try:
             paginator = c.get_paginator("list_objects_v2")
             for page in paginator.paginate(Bucket=bucket):
                 objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
                 for index in range(0, len(objects), 1000):
                     c.delete_objects(Bucket=bucket, Delete={"Objects": objects[index : index + 1000]})
-        except Exception:
-            pass
-        for cleanup in (
-            c.delete_bucket_policy,
-            c.delete_bucket_lifecycle,
-            c.delete_bucket_cors,
-            c.delete_bucket_tagging,
-        ):
+        except ClientError as exc:
+            self.handle_cleanup_error(bucket, "delete objects", exc, {"NoSuchBucket", "404"})
+        except Exception as exc:
+            self.cleanup_warning(bucket, "delete objects", exc)
+        cleanup_calls = (
+            (c.delete_bucket_policy, {"NoSuchBucket", "NoSuchBucketPolicy", "404"}),
+            (c.delete_bucket_lifecycle, {"NoSuchBucket", "NoSuchLifecycleConfiguration", "404"}),
+            (c.delete_bucket_cors, {"NoSuchBucket", "NoSuchCORSConfiguration", "NotImplemented", "404", "501"}),
+            (c.delete_bucket_tagging, {"NoSuchBucket", "NoSuchTagSet", "404"}),
+        )
+        for cleanup, expected in cleanup_calls:
             try:
                 cleanup(Bucket=bucket)
-            except Exception:
-                pass
+            except ClientError as exc:
+                self.handle_cleanup_error(bucket, cleanup.__name__, exc, expected)
+            except Exception as exc:
+                self.cleanup_warning(bucket, cleanup.__name__, exc)
         try:
             c.delete_bucket(Bucket=bucket)
-        except Exception:
-            pass
+        except ClientError as exc:
+            self.handle_cleanup_error(bucket, "delete bucket", exc, {"NoSuchBucket", "404"})
+        except Exception as exc:
+            self.cleanup_warning(bucket, "delete bucket", exc)
 
     def create_bucket(self, label: str, **kwargs: Any) -> str:
         bucket = _bucket(label)
@@ -191,8 +257,8 @@ class S3Mixin:
             url = f"{self.endpoint()}{path}"
 
             def _read() -> int:
-                with urllib.request.urlopen(url, timeout=10, context=URLLIB_CONTEXT) as response:
-                    return response.status
+                status, _ = self.http_request(url, timeout=10)
+                return status
 
             status = self.record("HTTP", path, _read)
             self.check(f"{path}-status", status == 200, f"{path} returned {status}")
@@ -508,7 +574,7 @@ class S3Mixin:
         try:
             key = "encrypted/customer-key.bin"
             customer_key = base64.b64encode(os.urandom(32)).decode("ascii")
-            body = b"secret payload with sse-c"
+            body = b"sample payload with sse-c"
 
             def put_ssec() -> Any:
                 return self.client.put_object(
@@ -637,8 +703,8 @@ class MinioSmokeUser(S3Mixin, User):
             self.bucket_configuration()
             self.ssec()
             self.object_lock_governance()
-        except Exception:
-            print(traceback.format_exc(), flush=True)
+        except Exception as exc:
+            print(f"smoke workload failed: {type(exc).__name__}: {exc}", flush=True)
             raise
         finally:
             runner = self.environment.runner

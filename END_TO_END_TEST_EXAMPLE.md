@@ -105,9 +105,9 @@ your normal deployment process.
 After deployment, collect the endpoint and credentials:
 
 ```bash
-export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=test-access-key
-export MINIO_SECRET_KEY=test-secret-key
+export MINIO_ENDPOINT=https://minio.example.internal:9000
+export MINIO_ACCESS_KEY=<access-key>
+export MINIO_SECRET_KEY=<secret-key>
 ```
 
 Confirm the validation host can reach the deployed endpoint:
@@ -191,13 +191,6 @@ no extra setting is needed.
 If this is an isolated validation environment with a private or self-signed
 certificate, install the endpoint CA certificate in the host trust store before
 running Locust.
-
-For urllib-based health and presigned URL checks only, this environment
-variable disables certificate verification:
-
-```bash
-export MINIO_VERIFY_TLS=0
-```
 
 ## Final Pass Criteria
 

@@ -49,9 +49,9 @@ python3 minio_test_runner.py smoke --minio-dir /path/to/minio
 After deploy:
 
 ```bash
-export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=test-access-key
-export MINIO_SECRET_KEY=test-secret-key
+export MINIO_ENDPOINT=https://minio.example.internal:9000
+export MINIO_ACCESS_KEY=<access-key>
+export MINIO_SECRET_KEY=<secret-key>
 
 locust -f longrun/minio_long.py MinioLongUser \
   --headless \

@@ -20,9 +20,9 @@ Long-running validation is not a runner subcommand. It is a direct Locust
 workload against a user-supplied MinIO/S3 endpoint.
 
 ```bash
-export MINIO_ENDPOINT=http://minio.example.internal:9000
-export MINIO_ACCESS_KEY=test-access-key
-export MINIO_SECRET_KEY=test-secret-key
+export MINIO_ENDPOINT=https://minio.example.internal:9000
+export MINIO_ACCESS_KEY=<access-key>
+export MINIO_SECRET_KEY=<secret-key>
 
 locust -f longrun/minio_long.py MinioLongUser \
   --headless \

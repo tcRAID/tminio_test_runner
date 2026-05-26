@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import pathlib
-import random
+import secrets
 import sys
 import threading
 import uuid
@@ -15,7 +15,7 @@ ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from locustfiles.minio_s3 import LONG_OBJECT_LIMIT, S3Mixin
+from locustfiles.minio_s3 import LONG_OBJECT_LIMIT, S3Mixin  # noqa: E402
 
 
 class MinioLongUser(S3Mixin, User):
@@ -51,11 +51,11 @@ class MinioLongUser(S3Mixin, User):
         with self.lock:
             if not self.known:
                 return None
-            return random.choice(list(self.known.keys()))
+            return secrets.choice(list(self.known.keys()))
 
     @task(35)
     def put_object(self) -> None:
-        size = random.choice([0, 1, 128, 4096, 65536, 1048576])
+        size = secrets.choice([0, 1, 128, 4096, 65536, 1048576])
         body = os.urandom(size)
         sha = hashlib.sha256(body).hexdigest()
         key = f"load/{uuid.uuid4().hex}.bin"
@@ -135,7 +135,7 @@ class MinioLongUser(S3Mixin, User):
     def multipart_upload(self) -> None:
         key = f"multipart/{uuid.uuid4().hex}.bin"
         part1 = os.urandom(5 * 1024 * 1024)
-        part2 = os.urandom(random.choice([1, 1024, 1024 * 1024]))
+        part2 = os.urandom(secrets.choice([1, 1024, 1024 * 1024]))
         upload = self.record(
             "S3",
             "CreateMultipartUpload.long",

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
+import http.client
 import importlib.util
 import json
 import os
@@ -17,7 +18,6 @@ import sys
 import threading
 import time
 import traceback
-import urllib.request
 from typing import Any
 
 
@@ -25,7 +25,7 @@ ROOT_DIR = pathlib.Path(__file__).resolve().parent
 DEFAULT_MINIO_DIR = ROOT_DIR.parent / "minio"
 DEFAULT_REPORT_DIR = ROOT_DIR / "test-reports"
 DEFAULT_LOCUSTFILE = ROOT_DIR / "locustfiles" / "minio_s3.py"
-DEFAULT_ACCESS_KEY = "tminioadmin"
+DEFAULT_ACCESS_KEY = ""
 DEFAULT_SECRET_KEY = ""
 SENSITIVE_ARG_NAMES = {"--access-key", "--secret-key"}
 
@@ -271,7 +271,7 @@ def run_command(
         log_file.write(f"# cwd: {cwd}\n\n")
         log_file.flush()
         print(f"[command] {name}: {' '.join(cmd)}")
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # noqa: S603  # nosec B603 - fixed runner tool invocations without a shell.
             cmd,
             cwd=str(cwd),
             env=merged_env,
@@ -283,7 +283,8 @@ def run_command(
         )
 
         def reader() -> None:
-            assert proc.stdout is not None
+            if proc.stdout is None:
+                return
             for line in proc.stdout:
                 print(line, end="")
                 log_file.write(line)
@@ -326,8 +327,9 @@ def run_command(
 
 def go_ldflags(minio_dir: pathlib.Path) -> str:
     try:
-        result = subprocess.run(
-            ["go", "run", "buildscripts/gen-ldflags.go"],
+        go_bin = require_tool("go")
+        result = subprocess.run(  # noqa: S603  # nosec B603 - go path is resolved and executed without a shell.
+            [go_bin, "run", "buildscripts/gen-ldflags.go"],
             cwd=str(minio_dir),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -382,20 +384,26 @@ def find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def wait_for_local_minio(endpoint: str, proc: subprocess.Popen[Any], timeout: int) -> None:
-    url = f"{endpoint}/minio/health/live"
+def wait_for_local_minio(api_port: int, proc: subprocess.Popen[Any], timeout: int) -> None:
     deadline = time.monotonic() + timeout
     last_error = ""
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise StepError(f"local MinIO exited before becoming healthy with status {proc.returncode}")
+        conn: http.client.HTTPConnection | None = None
         try:
-            with urllib.request.urlopen(url, timeout=2) as response:
-                if response.status == 200:
-                    return
-                last_error = f"health check returned HTTP {response.status}"
+            conn = http.client.HTTPConnection("127.0.0.1", api_port, timeout=2)
+            conn.request("GET", "/minio/health/live")
+            response = conn.getresponse()
+            response.read()
+            if response.status == 200:
+                return
+            last_error = f"health check returned HTTP {response.status}"
         except Exception as exc:
             last_error = str(exc)
+        finally:
+            if conn is not None:
+                conn.close()
         time.sleep(0.5)
     raise StepError(f"local MinIO did not become healthy within {timeout}s: {last_error}")
 
@@ -441,7 +449,7 @@ def start_local_minio(
             log_file.write(f"# cwd: {ROOT_DIR}\n\n")
             log_file.flush()
             print(f"[command] local-minio-start: {' '.join(cmd)}")
-            proc = subprocess.Popen(
+            proc = subprocess.Popen(  # noqa: S603  # nosec B603 - runner-built binary executed without a shell.
                 cmd,
                 cwd=str(ROOT_DIR),
                 env=env,
@@ -453,8 +461,9 @@ def start_local_minio(
         finally:
             log_file.close()
 
-        assert proc is not None
-        wait_for_local_minio(endpoint, proc, startup_timeout)
+        if proc is None:
+            raise StepError("local MinIO process was not started")
+        wait_for_local_minio(api_port, proc, startup_timeout)
     except Exception as exc:
         if proc is not None:
             terminate_process(proc)
@@ -611,7 +620,7 @@ def run_smoke(args: argparse.Namespace) -> int:
         if args.users != 1:
             raise StepError("smoke mode requires --users 1; use longrun/minio_long.py directly for concurrent workloads")
         minio_dir = resolve_minio_dir(args.minio_dir)
-        access_key = args.access_key or DEFAULT_ACCESS_KEY
+        access_key = args.access_key or f"tminio-{secrets.token_hex(8)}"
         secret_key = args.secret_key or secrets.token_urlsafe(32)
         report.metadata["minio_dir"] = str(minio_dir)
         require_tool("go")
@@ -639,7 +648,6 @@ def run_smoke(args: argparse.Namespace) -> int:
             "MINIO_ENDPOINT": endpoint,
             "MINIO_ACCESS_KEY": access_key,
             "MINIO_SECRET_KEY": secret_key,
-            "MINIO_VERIFY_TLS": "1",
             "MINIO_TEST_BUCKET_PREFIX": bucket_prefix,
             "MINIO_TEST_CLEANUP": "1",
         }
@@ -654,7 +662,6 @@ def run_smoke(args: argparse.Namespace) -> int:
                 "duration_seconds": duration,
                 "bucket_prefix": bucket_prefix,
                 "cleanup": True,
-                "verify_tls": True,
             }
         )
 
