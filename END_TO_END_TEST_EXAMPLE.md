@@ -5,8 +5,11 @@ source code:
 
 1. Run source validation against the changed source tree.
 2. Run smoke validation against a temporary local MinIO built from that source.
-3. Deploy the changed MinIO build to a real environment.
-4. Run the long Locust workload against the deployed endpoint.
+3. Run local operations validation for restart, ILM config persistence, and purge.
+4. Run local fault injection validation for removed-drive and corrupted-file
+   behavior.
+5. Deploy the changed MinIO build to a real environment.
+6. Run the long Locust workload against the deployed endpoint.
 
 Replace the paths, endpoint, and credentials with values from your environment.
 
@@ -97,7 +100,62 @@ Expected result:
   `locust-smoke`, and `local-minio-stop` steps.
 - No temporary `work/local-minio-data` directory remains after a passing run.
 
-## 4. Deploy To The Real Environment
+## 4. Run Local Operations Validation
+
+Operations validation also does not use a user endpoint. It builds MinIO from
+`MINIO_DIR`, starts it with a persistent temporary data directory, verifies clean
+restart persistence, verifies a forced restart after `SIGKILL`, and then purges
+the test bucket and bucket configuration.
+
+```bash
+cd "$RUNNER_DIR"
+. .venv/bin/activate
+
+python3 minio_test_runner.py ops \
+  --minio-dir "$MINIO_DIR" \
+  --bucket-prefix local-ops
+```
+
+Expected result:
+
+- The command exits with status `0`.
+- The report `summary.md` says `Result: PASS`.
+- The report contains passed `ops-minio-start`, `ops-prepare-state`,
+  `ops-verify-clean-restart`, `ops-verify-sigkill-restart`, `ops-purge-bucket`,
+  and `ops-minio-stop-final` steps.
+- No temporary `work/ops-minio-data` directory remains after a passing run.
+
+Ops validates lifecycle configuration persistence, not actual background ILM
+expiry timing. Keep MinIO source ILM/scanner Go tests in the source gate for
+expiry execution coverage.
+
+## 5. Run Local Fault Injection Validation
+
+Fault validation also does not use a user endpoint. It builds MinIO from
+`MINIO_DIR`, starts it with temporary filesystem drives, verifies removed-drive
+PUT/GET failures, verifies corrupted-file GET failure after restart, then
+re-adds a removed erasure drive and verifies healing evidence.
+
+```bash
+cd "$RUNNER_DIR"
+. .venv/bin/activate
+
+python3 minio_test_runner.py fault \
+  --minio-dir "$MINIO_DIR" \
+  --bucket-prefix local-fault
+```
+
+Expected result:
+
+- The command exits with status `0`.
+- The report `summary.md` says `Result: PASS`.
+- The report contains passed `fault-disk-removed-put-get`,
+  `fault-verify-drive-restored`, `fault-corrupt-object-file`,
+  `fault-corrupt-get`, `fault-mc-admin-heal`,
+  `fault-erasure-verify-heal`, and `fault-minio-stop-final` steps.
+- No temporary `work/fault-minio-data` directory remains after a passing run.
+
+## 6. Deploy To The Real Environment
 
 Deploy the same changed MinIO source to your real validation environment using
 your normal deployment process.
@@ -119,7 +177,7 @@ curl -fsS "$MINIO_ENDPOINT/minio/health/ready"
 
 Both commands should exit with status `0`.
 
-## 5. Run A Short Long-Run Shakedown
+## 7. Run A Short Long-Run Shakedown
 
 Before starting a long unattended run, execute a short endpoint run to confirm
 credentials, network access, and cleanup behavior.
@@ -150,7 +208,7 @@ Expected result:
 - The final Locust summary shows `0` failures.
 - Buckets with prefix `longrun-shakedown` are cleaned up when users stop.
 
-## 6. Run The Long Validation
+## 8. Run The Long Validation
 
 Run the long workload against the deployed endpoint. Adjust `--users`,
 `--spawn-rate`, and `--run-time` for your environment size.
@@ -198,6 +256,11 @@ The validation is complete when all of these are true:
 
 - Source validation passed.
 - Local smoke validation passed and cleaned its temporary local MinIO drive.
+- Local operations validation passed restart, ILM config persistence, and purge
+  checks, then cleaned its temporary local MinIO drive.
+- Local fault validation passed removed-drive PUT/GET, corrupted-file GET, and
+  re-added erasure drive healing checks, then cleaned its temporary local MinIO
+  drives.
 - The changed MinIO build is deployed to the real environment.
 - The long Locust run completed against the deployed endpoint with zero
   failures.

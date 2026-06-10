@@ -2,9 +2,9 @@
 
 This package has two entry points:
 
-- `minio_test_runner.py`: source validation and local smoke validation. The
-  user supplies the MinIO source path. The runner builds MinIO and, for smoke,
-  starts a temporary local MinIO server.
+- `minio_test_runner.py`: source, local smoke, local operations, and local fault
+  validation. The user supplies the MinIO source path. The runner builds MinIO
+  and, for smoke, ops, and fault, starts a temporary local MinIO server.
 - `longrun/minio_long.py`: long-running Locust workload. The user supplies the
   MinIO/S3 endpoint and credentials directly to Locust through environment and
   `--host`.
@@ -108,6 +108,110 @@ Smoke report steps include:
 - `locust-smoke`
 - `local-minio-stop`
 
+## Local Operations Validation
+
+Operations validation builds MinIO from `--minio-dir`, starts a local MinIO with
+a persistent temporary data directory, and verifies operational behavior across
+process restarts.
+
+```bash
+python3 minio_test_runner.py ops --minio-dir /opt/minio
+```
+
+Useful options:
+
+```bash
+python3 minio_test_runner.py ops --minio-dir /opt/minio --bucket-prefix validation-ops
+python3 minio_test_runner.py ops --minio-dir /opt/minio --report-dir ./reports
+python3 minio_test_runner.py ops --minio-dir /opt/minio --keep-workdir
+```
+
+Local ops behavior:
+
+- Creates versioned bucket state, bucket tags, bucket policy, lifecycle config,
+  object versions, and a delete marker.
+- Stops MinIO cleanly, restarts with the same data directory, and verifies the
+  state survived.
+- Writes a probe object, kills MinIO with `SIGKILL`, restarts with the same data
+  directory, and verifies the probe object survived.
+- Strictly purges versions, delete markers, current objects, bucket config, and
+  the bucket. Any `DeleteObjects` partial error fails the run.
+
+Ops report steps include:
+
+- `go-build-minio`
+- `ops-minio-start`
+- `ops-prepare-state`
+- `ops-minio-stop-clean`
+- `ops-minio-restart-clean`
+- `ops-verify-clean-restart`
+- `ops-write-crash-probe`
+- `ops-minio-stop-sigkill`
+- `ops-minio-restart-after-sigkill`
+- `ops-verify-sigkill-restart`
+- `ops-purge-bucket`
+- `ops-minio-stop-final`
+
+The lifecycle part of ops verifies lifecycle configuration persistence across
+restart. Actual background ILM expiry timing is environment-dependent; keep
+MinIO's source ILM/scanner Go tests in the release gate for expiry execution
+coverage.
+
+## Local Fault Injection Validation
+
+Fault validation builds MinIO from `--minio-dir`, starts a local MinIO with a
+temporary filesystem drive, and injects local-drive failures. It also starts a
+local erasure setup to verify re-added drive healing.
+
+```bash
+python3 minio_test_runner.py fault --minio-dir /opt/minio
+```
+
+Useful options:
+
+```bash
+python3 minio_test_runner.py fault --minio-dir /opt/minio --bucket-prefix validation-fault
+python3 minio_test_runner.py fault --minio-dir /opt/minio --report-dir ./reports
+python3 minio_test_runner.py fault --minio-dir /opt/minio --keep-workdir
+python3 minio_test_runner.py fault --minio-dir /opt/minio --heal-drive-count 4 --heal-timeout 120
+```
+
+Local fault behavior:
+
+- Creates a bucket with a baseline object and a corruption target object.
+- Renames the local MinIO drive directory away while MinIO is running.
+- Verifies PUT and GET fail while the drive path is removed, and verifies the
+  MinIO process remains running.
+- Restores the drive directory and verifies the baseline object is readable.
+- Stops MinIO, corrupts the target object's on-disk file, restarts MinIO, and
+  verifies GET fails instead of returning corrupted content.
+- Starts a local file-backed erasure setup, removes one drive, writes an object
+  while that drive is missing, and verifies the missing drive has no copy of the
+  object before re-add.
+- Re-adds the drive, runs `mc admin heal`, verifies the object hash, and
+  verifies the object's files appear under the re-added drive.
+
+Fault report steps include:
+
+- `go-build-minio`
+- `fault-minio-start`
+- `fault-prepare-state`
+- `fault-disk-removed-put-get`
+- `fault-verify-drive-restored`
+- `fault-minio-stop-before-corrupt`
+- `fault-corrupt-object-file`
+- `fault-minio-restart-after-corrupt`
+- `fault-corrupt-get`
+- `fault-minio-stop-before-heal`
+- `fault-erasure-minio-start`
+- `fault-erasure-prepare-state`
+- `fault-erasure-remove-drive-put`
+- `fault-erasure-readd-drive`
+- `fault-mc-alias-set`
+- `fault-mc-admin-heal`
+- `fault-erasure-verify-heal`
+- `fault-minio-stop-final`
+
 ## Long-Running Validation
 
 Long-running validation is intentionally outside `minio_test_runner.py`. Run it
@@ -166,11 +270,12 @@ you pass to the `locust` command.
 
 Source validation does not modify the MinIO source tree.
 
-Local smoke cleanup is automatic:
+Local smoke, ops, and fault cleanup is automatic:
 
 - The local MinIO process is stopped.
 - The temporary filesystem drive directory is removed.
 - Smoke-created buckets are removed by the workload before the server stops.
+- Ops-created buckets are purged before the server stops.
 - Passing runner work directories are removed unless `--keep-workdir` is set.
 
 Long-run cleanup depends on the endpoint and Locust process lifetime:

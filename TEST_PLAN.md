@@ -5,7 +5,8 @@ result, and cleanup rules for `tminio_test_runner`.
 
 The package has two entry points:
 
-- `minio_test_runner.py` for source validation and local smoke validation.
+- `minio_test_runner.py` for source validation, local smoke validation, local
+  operations validation, and local fault injection validation.
 - `longrun/minio_long.py` for long-running Locust validation against a
   user-supplied endpoint.
 
@@ -18,8 +19,8 @@ the MinIO source tree.
 | --- | --- |
 | Small source-only change | `python3 minio_test_runner.py source --minio-dir /path/to/minio --packages ./cmd` |
 | Normal code change | `python3 minio_test_runner.py source --minio-dir /path/to/minio --packages ./cmd` and `python3 minio_test_runner.py smoke --minio-dir /path/to/minio` |
-| Storage, S3 API, metadata, multipart, versioning, object lock, or policy change | `python3 minio_test_runner.py source --minio-dir /path/to/minio --race` and `python3 minio_test_runner.py smoke --minio-dir /path/to/minio` |
-| Larger or risky change | Source + smoke above, then `locust -f longrun/minio_long.py MinioLongUser --host "$MINIO_ENDPOINT" --headless --users 8 --spawn-rate 1 --run-time 12h` |
+| Storage, S3 API, metadata, multipart, versioning, object lock, policy, restart, ILM, purge, or disk fault handling change | `python3 minio_test_runner.py source --minio-dir /path/to/minio --race`, `python3 minio_test_runner.py smoke --minio-dir /path/to/minio`, `python3 minio_test_runner.py ops --minio-dir /path/to/minio`, and `python3 minio_test_runner.py fault --minio-dir /path/to/minio` |
+| Larger or risky change | Source + smoke + ops + fault above, then `locust -f longrun/minio_long.py MinioLongUser --host "$MINIO_ENDPOINT" --headless --users 8 --spawn-rate 1 --run-time 12h` |
 | Nightly validation | `python3 minio_test_runner.py source --minio-dir /path/to/minio --race --timeout 90m` and direct Locust long run |
 
 Any non-zero exit code, Locust failure, correctness assertion failure, runner
@@ -31,10 +32,13 @@ timeout, or failed cleanup step is a validation failure.
 | --- | --- | --- | --- |
 | `source` | `minio_test_runner.py source` | MinIO source tree | Go environment capture, MinIO build, MinIO-owned Go tests, optional race detector |
 | `smoke` | `minio_test_runner.py smoke` | Local MinIO built from the source tree | Single-user S3 correctness against a temporary localhost MinIO |
+| `ops` | `minio_test_runner.py ops` | Local MinIO built from the source tree | Restart persistence, forced restart persistence, lifecycle config persistence, strict purge |
+| `fault` | `minio_test_runner.py fault` | Local MinIO built from the source tree | Removed local drive PUT/GET failure, object-file corruption GET failure, re-added erasure drive healing |
 | `long` | `locust -f longrun/minio_long.py MinioLongUser` | User-supplied MinIO/S3 endpoint | Extended mixed S3 workload with repeated correctness checks |
 
-`source` and `smoke` require only `--minio-dir` or `MINIO_DIR`. They do not
-require a user-provided endpoint. `smoke` starts and stops its own local MinIO.
+`source`, `smoke`, `ops`, and `fault` require only `--minio-dir` or `MINIO_DIR`.
+They do not require a user-provided endpoint. `smoke`, `ops`, and `fault` start
+and stop their own local MinIO.
 
 `long` is not a `minio_test_runner.py` subcommand. It is direct Locust
 execution and requires endpoint credentials.
@@ -188,6 +192,90 @@ Cleanup requirements:
 - Passing runs remove the whole `work/` directory unless `--keep-workdir` is
   set.
 
+## Local Operations Validation
+
+Purpose:
+
+- Verify that persisted object and bucket state survives clean restart.
+- Verify that an object acknowledged before a forced process stop is readable
+  after restart.
+- Verify lifecycle, tagging, policy, versioning, and delete marker metadata
+  survive restart.
+- Verify purge removes versions, delete markers, current objects, bucket
+  configuration, and the bucket.
+
+Command:
+
+```bash
+python3 minio_test_runner.py ops --minio-dir /path/to/minio
+```
+
+Runner steps:
+
+| Step | Behavior | Expected result |
+| --- | --- | --- |
+| Build local MinIO | Build source into `work/bin/minio` | Build exits `0` |
+| Start local MinIO | Start `minio server <persistent-temp-drive>` | Health endpoint returns `200` |
+| Prepare state | Create versioned bucket, objects, tags, policy, lifecycle config, and delete marker | All operations succeed |
+| Clean restart | Stop MinIO, restart with same data directory | Process becomes healthy |
+| Verify clean restart | Read persisted object/version/config state | State matches pre-restart values |
+| Forced restart | Write probe object, kill MinIO with `SIGKILL`, restart with same data directory | Process becomes healthy |
+| Verify forced restart | Read probe object | Probe body hash matches |
+| Purge bucket | Delete all versions/delete markers/current objects/config, delete bucket | Bucket no longer exists |
+| Final cleanup | Stop MinIO and remove temp drive | No temporary data directory remains |
+
+Ops coverage limits:
+
+- Lifecycle coverage validates config persistence. Background ILM expiry depends
+  on scanner timing and is better covered by MinIO source tests such as
+  lifecycle/scanner/expiry tests in `./cmd` and `./internal/bucket/lifecycle`.
+- Local ops uses a single local filesystem drive. It does not replace erasure or
+  distributed cluster validation.
+
+## Local Fault Injection Validation
+
+Purpose:
+
+- Verify PUT fails while the local filesystem drive path is removed.
+- Verify GET fails while the local filesystem drive path is removed.
+- Verify the server process remains running during removed-drive request
+  failures.
+- Verify GET fails after an object file is corrupted on disk and MinIO is
+  restarted.
+- Verify a local erasure setup can accept a write while one drive is missing,
+  then verify the object is readable and materialized on that drive after re-add
+  and heal.
+
+Command:
+
+```bash
+python3 minio_test_runner.py fault --minio-dir /path/to/minio
+```
+
+Runner steps:
+
+| Step | Behavior | Expected result |
+| --- | --- | --- |
+| Build local MinIO | Build source into `work/bin/minio` | Build exits `0` |
+| Start local MinIO | Start `minio server <temp-drive>` | Health endpoint returns `200` |
+| Prepare state | Create bucket, baseline object, and corruption target object | All operations succeed |
+| Removed drive PUT/GET | Rename the drive directory away, attempt PUT and GET, restore the drive | PUT and GET fail; process remains running |
+| Verify restore | Read the baseline object after drive restore | Body hash matches original |
+| Corrupt object file | Stop MinIO and flip bytes in the target object's on-disk file | File mutation succeeds |
+| Corrupted GET | Restart MinIO and GET the corrupted target object | GET fails; process remains running |
+| Start local erasure MinIO | Start MinIO with four temporary filesystem drives | Health endpoint returns `200` |
+| Removed erasure drive PUT | Rename one erasure drive away, PUT a new object, and verify it remains readable from the remaining drives | PUT succeeds; removed drive has no object files |
+| Re-add and heal | Restore the drive, run `mc admin heal`, read the object, and check the re-added drive's files | Body hash matches; `xl.meta` and data part appear on the re-added drive |
+| Final cleanup | Stop MinIO and remove temp drives | No temporary data directory remains |
+
+Fault coverage limits:
+
+- Fault mode uses local filesystem directories as MinIO drives. The removed
+  single-drive checks validate request failure and process survival.
+- The heal check uses a local file-backed erasure setup. It validates re-add
+  healing evidence, but it is not a substitute for a real multi-node hardware
+  failure test.
+
 ## Long-Running Locust Validation
 
 Purpose:
@@ -264,6 +352,8 @@ A runner release is acceptable when:
 - `python3 -m py_compile minio_test_runner.py locustfiles/minio_s3.py longrun/minio_long.py` passes.
 - `python3 minio_test_runner.py source --minio-dir /path/to/minio --packages ./cmd` passes.
 - `python3 minio_test_runner.py smoke --minio-dir /path/to/minio` passes.
+- `python3 minio_test_runner.py ops --minio-dir /path/to/minio` passes.
+- `python3 minio_test_runner.py fault --minio-dir /path/to/minio` passes.
 - A direct Locust import/help check for `longrun/minio_long.py` passes.
 - No generated reports, Python caches, temporary local MinIO data directories,
   or local MinIO processes remain in the release tree.
