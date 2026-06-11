@@ -43,6 +43,13 @@ and stop their own local MinIO.
 `long` is not a `minio_test_runner.py` subcommand. It is direct Locust
 execution and requires endpoint credentials.
 
+## Host Requirements
+
+- Python 3 with venv support, or an equivalent isolated Python environment.
+- Go compatible with the MinIO source tree under test.
+- MinIO Client `mc` on `PATH` for `fault` re-add/heal validation.
+- Python dependencies from `minio-test-requirements.txt`.
+
 ## Source Validation
 
 Purpose:

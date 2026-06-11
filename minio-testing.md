@@ -12,6 +12,9 @@ restart readability, and strictly purges the test bucket. For fault validation,
 the runner injects local drive removal, object-file corruption, and local
 erasure drive re-add/heal validation.
 
+Required host tools are Python 3, Go compatible with the MinIO source tree, and
+MinIO Client `mc` for the local fault re-add/heal validation.
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate

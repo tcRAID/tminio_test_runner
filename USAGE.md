@@ -31,7 +31,7 @@ The MinIO source tree is external to this package.
 ## Runtime Setup
 
 ```bash
-cd /opt/tminio_test_runner
+cd /opt/oss_latest_minio_with_patch/tminio_test_runner
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install --upgrade pip
@@ -40,8 +40,9 @@ python3 -m pip install -r minio-test-requirements.txt
 
 Required host tools:
 
-- Python 3
+- Python 3 with venv support, or an equivalent isolated Python environment
 - Go compatible with the MinIO source tree under test
+- MinIO Client `mc` on `PATH` for `fault` re-add/heal validation
 - `locust` and `boto3` from `minio-test-requirements.txt`
 
 ## Source Validation
@@ -299,6 +300,15 @@ Resolution:
 . .venv/bin/activate
 python3 -m pip install -r minio-test-requirements.txt
 ```
+
+Missing MinIO Client:
+
+```text
+required tool not found: mc
+```
+
+Resolution: install MinIO Client and make sure `mc` is on `PATH` before running
+`fault`.
 
 Local smoke does not start:
 

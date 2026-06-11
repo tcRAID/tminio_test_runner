@@ -33,6 +33,9 @@ temporary filesystem drives.
 
 `longrun/minio_long.py` uses a deployed endpoint supplied by the user.
 
+Required host tools are Python 3, Go compatible with the MinIO source tree, and
+MinIO Client `mc` for the local fault re-add/heal validation.
+
 ## Documents
 
 | File | Use it for |

@@ -6,8 +6,8 @@ source code:
 1. Run source validation against the changed source tree.
 2. Run smoke validation against a temporary local MinIO built from that source.
 3. Run local operations validation for restart, ILM config persistence, and purge.
-4. Run local fault injection validation for removed-drive and corrupted-file
-   behavior.
+4. Run local fault injection validation for removed-drive, corrupted-file, and
+   re-add/heal behavior.
 5. Deploy the changed MinIO build to a real environment.
 6. Run the long Locust workload against the deployed endpoint.
 
@@ -16,12 +16,14 @@ Replace the paths, endpoint, and credentials with values from your environment.
 ## Example Assumptions
 
 ```bash
-export RUNNER_DIR=/home/tminio_test_runner/tminio_test_runner
-export MINIO_DIR=/home/tminio_test_runner/minio
+export RELEASE_ROOT=/opt/oss_latest_minio_with_patch
+export RUNNER_DIR="$RELEASE_ROOT/tminio_test_runner"
+export MINIO_DIR="$RELEASE_ROOT/tMinIO"
 ```
 
 `MINIO_DIR` must point to the MinIO source tree that contains your code
-changes and a `go.mod` file.
+changes and a `go.mod` file. If you use separate checkouts instead of the
+release package layout, set `RUNNER_DIR` and `MINIO_DIR` to those paths.
 
 ## 1. Prepare The Runner Environment
 
@@ -34,7 +36,14 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -r minio-test-requirements.txt
 ```
 
-The host must also have a Go version compatible with the MinIO source tree.
+Use an isolated Python environment. If `python3 -m venv` is unavailable, install
+Python venv support such as `python3-venv` or use an equivalent clean Python
+environment before installing the requirements.
+
+The host must also have:
+
+- A Go version compatible with the MinIO source tree.
+- MinIO Client `mc` on `PATH` for the fault re-add/heal validation.
 
 ## 2. Run Source Validation
 
@@ -98,7 +107,8 @@ Expected result:
 - The report `summary.md` says `Result: PASS`.
 - The report contains passed `go-build-minio`, `local-minio-start`,
   `locust-smoke`, and `local-minio-stop` steps.
-- No temporary `work/local-minio-data` directory remains after a passing run.
+- No temporary runner `work/` directory remains after a passing run unless
+  `--keep-workdir` is set.
 
 ## 4. Run Local Operations Validation
 
@@ -123,7 +133,8 @@ Expected result:
 - The report contains passed `ops-minio-start`, `ops-prepare-state`,
   `ops-verify-clean-restart`, `ops-verify-sigkill-restart`, `ops-purge-bucket`,
   and `ops-minio-stop-final` steps.
-- No temporary `work/ops-minio-data` directory remains after a passing run.
+- No temporary runner `work/` directory remains after a passing run unless
+  `--keep-workdir` is set.
 
 Ops validates lifecycle configuration persistence, not actual background ILM
 expiry timing. Keep MinIO source ILM/scanner Go tests in the source gate for
@@ -151,9 +162,11 @@ Expected result:
 - The report `summary.md` says `Result: PASS`.
 - The report contains passed `fault-disk-removed-put-get`,
   `fault-verify-drive-restored`, `fault-corrupt-object-file`,
-  `fault-corrupt-get`, `fault-mc-admin-heal`,
+  `fault-corrupt-get`, `fault-erasure-remove-drive-put`,
+  `fault-erasure-readd-drive`, `fault-mc-alias-set`, `fault-mc-admin-heal`,
   `fault-erasure-verify-heal`, and `fault-minio-stop-final` steps.
-- No temporary `work/fault-minio-data` directory remains after a passing run.
+- No temporary runner `work/` directory remains after a passing run unless
+  `--keep-workdir` is set.
 
 ## 6. Deploy To The Real Environment
 
