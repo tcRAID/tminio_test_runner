@@ -36,6 +36,10 @@ temporary filesystem drives.
 Required host tools are Python 3, Go compatible with the MinIO source tree, and
 MinIO Client `mc` for the local fault re-add/heal validation.
 
+In the release package layout, `tminio_test_runner/` and `tMinIO/` are sibling
+directories. The runner auto-detects sibling `../tMinIO`; for another source
+checkout, pass `--minio-dir` or set `MINIO_DIR`.
+
 ## Documents
 
 | File | Use it for |

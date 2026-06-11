@@ -22,12 +22,21 @@ from typing import Any
 
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parent
-DEFAULT_MINIO_DIR = ROOT_DIR.parent / "minio"
 DEFAULT_REPORT_DIR = ROOT_DIR / "test-reports"
 DEFAULT_LOCUSTFILE = ROOT_DIR / "locustfiles" / "minio_s3.py"
 DEFAULT_ACCESS_KEY = ""
 DEFAULT_SECRET_KEY = ""
 SENSITIVE_ARG_NAMES = {"--access-key", "--secret-key"}
+
+
+def detect_default_minio_dir() -> pathlib.Path:
+    for candidate in (ROOT_DIR.parent / "tMinIO", ROOT_DIR.parent / "minio"):
+        if (candidate / "go.mod").is_file():
+            return candidate
+    return ROOT_DIR.parent / "tMinIO"
+
+
+DEFAULT_MINIO_DIR = detect_default_minio_dir()
 
 
 class StepError(RuntimeError):
@@ -1557,7 +1566,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--minio-dir",
         default=os.getenv("MINIO_DIR", str(DEFAULT_MINIO_DIR)),
-        help="path to the MinIO source directory; defaults from MINIO_DIR or ../minio",
+        help="path to the MinIO source directory; defaults from MINIO_DIR, ../tMinIO, or ../minio",
     )
     parser.add_argument("--report-dir", default=str(DEFAULT_REPORT_DIR), help="directory for reports")
     parser.add_argument("--keep-workdir", action="store_true", help="preserve work files after successful runs")

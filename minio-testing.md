@@ -16,14 +16,16 @@ Required host tools are Python 3, Go compatible with the MinIO source tree, and
 MinIO Client `mc` for the local fault re-add/heal validation.
 
 ```bash
+export MINIO_DIR=/opt/oss_latest_minio_with_patch/tMinIO
+
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install -r minio-test-requirements.txt
 
-python3 minio_test_runner.py source --minio-dir /opt/minio --packages ./cmd
-python3 minio_test_runner.py smoke --minio-dir /opt/minio
-python3 minio_test_runner.py ops --minio-dir /opt/minio
-python3 minio_test_runner.py fault --minio-dir /opt/minio
+python3 minio_test_runner.py source --minio-dir "$MINIO_DIR" --packages ./cmd
+python3 minio_test_runner.py smoke --minio-dir "$MINIO_DIR"
+python3 minio_test_runner.py ops --minio-dir "$MINIO_DIR"
+python3 minio_test_runner.py fault --minio-dir "$MINIO_DIR"
 ```
 
 Long-running validation is not a runner subcommand. It is a direct Locust

@@ -32,6 +32,8 @@ The MinIO source tree is external to this package.
 
 ```bash
 cd /opt/oss_latest_minio_with_patch/tminio_test_runner
+export MINIO_DIR=/opt/oss_latest_minio_with_patch/tMinIO
+
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install --upgrade pip
@@ -50,16 +52,16 @@ Required host tools:
 Source validation builds the MinIO server binary and runs MinIO's own Go tests.
 
 ```bash
-python3 minio_test_runner.py source --minio-dir /opt/minio --packages ./cmd
+python3 minio_test_runner.py source --minio-dir "$MINIO_DIR" --packages ./cmd
 ```
 
 Common variants:
 
 ```bash
-python3 minio_test_runner.py source --minio-dir /opt/minio
-python3 minio_test_runner.py source --minio-dir /opt/minio --packages ./cmd ./internal/...
-python3 minio_test_runner.py source --minio-dir /opt/minio --run TestIAM --packages ./cmd
-python3 minio_test_runner.py source --minio-dir /opt/minio --race --packages ./cmd
+python3 minio_test_runner.py source --minio-dir "$MINIO_DIR"
+python3 minio_test_runner.py source --minio-dir "$MINIO_DIR" --packages ./cmd ./internal/...
+python3 minio_test_runner.py source --minio-dir "$MINIO_DIR" --run TestIAM --packages ./cmd
+python3 minio_test_runner.py source --minio-dir "$MINIO_DIR" --race --packages ./cmd
 ```
 
 The source profile executes:
@@ -80,16 +82,16 @@ filesystem drive, runs the single-user smoke workload, stops MinIO, and removes
 the temporary data directory.
 
 ```bash
-python3 minio_test_runner.py smoke --minio-dir /opt/minio
+python3 minio_test_runner.py smoke --minio-dir "$MINIO_DIR"
 ```
 
 Useful options:
 
 ```bash
-python3 minio_test_runner.py smoke --minio-dir /opt/minio --bucket-prefix validation-smoke
-python3 minio_test_runner.py smoke --minio-dir /opt/minio --duration 10m
-python3 minio_test_runner.py smoke --minio-dir /opt/minio --report-dir ./reports
-python3 minio_test_runner.py smoke --minio-dir /opt/minio --keep-workdir
+python3 minio_test_runner.py smoke --minio-dir "$MINIO_DIR" --bucket-prefix validation-smoke
+python3 minio_test_runner.py smoke --minio-dir "$MINIO_DIR" --duration 10m
+python3 minio_test_runner.py smoke --minio-dir "$MINIO_DIR" --report-dir ./reports
+python3 minio_test_runner.py smoke --minio-dir "$MINIO_DIR" --keep-workdir
 ```
 
 Local smoke behavior:
@@ -116,15 +118,15 @@ a persistent temporary data directory, and verifies operational behavior across
 process restarts.
 
 ```bash
-python3 minio_test_runner.py ops --minio-dir /opt/minio
+python3 minio_test_runner.py ops --minio-dir "$MINIO_DIR"
 ```
 
 Useful options:
 
 ```bash
-python3 minio_test_runner.py ops --minio-dir /opt/minio --bucket-prefix validation-ops
-python3 minio_test_runner.py ops --minio-dir /opt/minio --report-dir ./reports
-python3 minio_test_runner.py ops --minio-dir /opt/minio --keep-workdir
+python3 minio_test_runner.py ops --minio-dir "$MINIO_DIR" --bucket-prefix validation-ops
+python3 minio_test_runner.py ops --minio-dir "$MINIO_DIR" --report-dir ./reports
+python3 minio_test_runner.py ops --minio-dir "$MINIO_DIR" --keep-workdir
 ```
 
 Local ops behavior:
@@ -165,16 +167,16 @@ temporary filesystem drive, and injects local-drive failures. It also starts a
 local erasure setup to verify re-added drive healing.
 
 ```bash
-python3 minio_test_runner.py fault --minio-dir /opt/minio
+python3 minio_test_runner.py fault --minio-dir "$MINIO_DIR"
 ```
 
 Useful options:
 
 ```bash
-python3 minio_test_runner.py fault --minio-dir /opt/minio --bucket-prefix validation-fault
-python3 minio_test_runner.py fault --minio-dir /opt/minio --report-dir ./reports
-python3 minio_test_runner.py fault --minio-dir /opt/minio --keep-workdir
-python3 minio_test_runner.py fault --minio-dir /opt/minio --heal-drive-count 4 --heal-timeout 120
+python3 minio_test_runner.py fault --minio-dir "$MINIO_DIR" --bucket-prefix validation-fault
+python3 minio_test_runner.py fault --minio-dir "$MINIO_DIR" --report-dir ./reports
+python3 minio_test_runner.py fault --minio-dir "$MINIO_DIR" --keep-workdir
+python3 minio_test_runner.py fault --minio-dir "$MINIO_DIR" --heal-drive-count 4 --heal-timeout 120
 ```
 
 Local fault behavior:
