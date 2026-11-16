@@ -1,62 +1,42 @@
-# MinIO Validation Runner
+# tminio_test_runner
 
-## Start Here
+System tests for a running MinIO S3 endpoint, including the tMinIO release on Ubuntu 26.04. This repository owns the system tests; the [tMinIO repository](https://github.com/tcRAID/tMinIO) owns the service.
 
-Read [END_TO_END_TEST_EXAMPLE.md](END_TO_END_TEST_EXAMPLE.md) and follow the
-commands.
-
-Normal flow:
-
-1. Change MinIO source code.
-2. Run `source`.
-3. Run local `smoke`.
-4. Deploy MinIO.
-5. Run Locust long test against the deployed endpoint.
-
-## Entry Points
-
-| Purpose | Command |
-| --- | --- |
-| Source build and Go tests | `python3 minio_test_runner.py source --minio-dir /path/to/minio --packages ./cmd` |
-| Local smoke test | `python3 minio_test_runner.py smoke --minio-dir /path/to/minio` |
-| Long endpoint test | `locust -f longrun/minio_long.py MinioLongUser --host "$MINIO_ENDPOINT"` |
-
-`source` and `smoke` use a MinIO source path. `smoke` starts and cleans up a
-temporary local MinIO.
-
-`longrun/minio_long.py` uses a deployed endpoint supplied by the user.
-
-## Documents
-
-| File | Use it for |
-| --- | --- |
-| [END_TO_END_TEST_EXAMPLE.md](END_TO_END_TEST_EXAMPLE.md) | Copy-paste run example for source, smoke, deploy, long run |
-| [USAGE.md](USAGE.md) | Command options, reports, cleanup, troubleshooting |
-| [TEST_PLAN.md](TEST_PLAN.md) | Test scope, coverage, expected result |
-| [minio-testing.md](minio-testing.md) | Short validation overview |
-
-## Minimal Commands
+Run one command:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install -r minio-test-requirements.txt
-
-python3 minio_test_runner.py source --minio-dir /path/to/minio --packages ./cmd
-python3 minio_test_runner.py smoke --minio-dir /path/to/minio
+./run.sh http://HOST:9000
 ```
 
-After deploy:
+Enter the access key and secret key when prompted. The secret is hidden. Running `./run.sh` without arguments also prompts for the endpoint. No buckets, objects, configuration file, MinIO binary or previous deployment are needed.
+
+The default run performs **20 checks**, creates its test data, and removes that data afterward. It tests cluster health, object integrity, listing, multipart, versioning/restoration, concurrent access, permissions, signed URLs, bucket policies/configuration, HTTP encryption rejection and real lifecycle processing. It uses one cluster and does not restart services or change global configuration. Full coverage is listed in [TEST_PLAN.md](TEST_PLAN.md).
+
+Use the self-contained archive on an internal node:
 
 ```bash
-export MINIO_ENDPOINT=https://minio.example.internal:9000
-export MINIO_ACCESS_KEY=<access-key>
-export MINIO_SECRET_KEY=<secret-key>
-
-locust -f longrun/minio_long.py MinioLongUser \
-  --headless \
-  --host "$MINIO_ENDPOINT" \
-  --users 8 \
-  --spawn-rate 1 \
-  --run-time 12h
+sha256sum -c tminio_test_runner.tar.gz.sha256
+tar -xzf tminio_test_runner.tar.gz
+cd tminio_test_runner
+./run.sh http://HOST:9000
 ```
+
+The archive includes Python dependencies and needs no internet, pip, venv, mc, Go or sudo at runtime. Requirements: Linux, Python 3.10+, 2 GiB local temporary space, roughly 5 GiB logical cluster space plus erasure overhead, and a test account with the required S3 and `admin:ServerInfo` permissions. A source checkout installs pinned dependencies in a private cached venv on first use and needs internet plus `python3-venv` for that step.
+
+All normal settings have defaults: 30-minute overall deadline, separate 5-minute cleanup deadline, 10-minute lifecycle wait, `us-east-1` region, and reports in the current directory. HTTP needs no certificate options. For automation, supply `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`. Existing `TMINIO_TEST_ACCESS_KEY` / `TMINIO_TEST_SECRET_KEY` pairs also work; conflicting pairs fail before setup.
+
+Exit **0** means every selected check and teardown passed. Failed/incomplete checks or cleanup return **1**; invalid input/setup returns **2**. The printed `minio-check-*` directory contains the summary, JSON and JUnit reports. Success, failure, timeout and normal interruption all trigger teardown. If deletion is denied or the endpoint is unreachable, the run fails and reports the remaining bucket names. Forced termination or host loss can prevent cleanup.
+
+Additional commands are optional:
+
+```bash
+./run.sh soak http://HOST:9000  # 5 minutes, 8 clients, bounded stored data
+./run.sh unit                  # harness tests; no endpoint or credentials
+./run.sh lab --list            # explicitly configured advanced lab tests
+```
+
+See [USAGE.md](USAGE.md) for details and [suite/README.md](suite/README.md) for the advanced lab. Replication, outages, maintenance, active retention and legal holds are never part of the default run. PASS covers the tested operations on the current deployment; it does not establish pre-upgrade application data integrity or inspect the servers' OS/kernel configuration.
+
+Build a transfer archive on a connected workstation with `python3 suite/package_release.py`. The output is `dist/tminio_test_runner.tar.gz` and its SHA-256 file. The allowlisted archive excludes local credentials, configuration and reports. To reuse pinned dependencies from a previously verified extracted archive, add `--vendor-from /path/to/extracted/archive`.
+
+The consolidated release suite was moved from the service repository's development release tests. Imported MinIO-derived code is distributed under [AGPL-3.0](LICENSE).

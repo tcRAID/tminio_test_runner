@@ -1,0 +1,20 @@
+{
+  "environment": "REPLACE_WITH_dev_AFTER_CHECKING_TARGETS",
+  "sudo": true,
+  "timeout_seconds": 20,
+  "nodes": {
+    "source1": {"host": "tminio-dev-source1", "unit": "tminio.service"},
+    "source2": {"host": "tminio-dev-source2", "unit": "tminio.service"},
+    "source3": {"host": "tminio-dev-source3", "unit": "tminio.service"},
+    "source4": {"host": "tminio-dev-source4", "unit": "tminio.service"},
+    "target1": {"host": "tminio-dev-target1", "unit": "tminio.service"},
+    "target2": {"host": "tminio-dev-target2", "unit": "tminio.service"},
+    "target3": {"host": "tminio-dev-target3", "unit": "tminio.service"},
+    "target4": {"host": "tminio-dev-target4", "unit": "tminio.service"}
+  },
+  "groups": {
+    "node": ["source4"],
+    "quorum": ["source3", "source4"],
+    "target": ["target1", "target2", "target3", "target4"]
+  }
+}

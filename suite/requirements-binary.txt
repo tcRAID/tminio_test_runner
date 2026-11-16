@@ -1,0 +1,3 @@
+# These client versions are exercised by the local validation recorded in README.md.
+boto3==1.44.1
+botocore==1.44.1
