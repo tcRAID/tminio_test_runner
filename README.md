@@ -10,7 +10,7 @@ Run one command:
 
 Enter the access key and secret key when prompted. The secret is hidden. Running `./run.sh` without arguments also prompts for the endpoint. No buckets, objects, configuration file, MinIO binary or previous deployment are needed.
 
-The default run performs **20 checks**, creates its test data, and removes that data afterward. It tests cluster health, object integrity, listing, multipart, versioning/restoration, concurrent access, permissions, signed URLs, bucket policies/configuration, HTTP encryption rejection and real lifecycle processing. It uses one cluster and does not restart services or change global configuration. Full coverage is listed in [TEST_PLAN.md](TEST_PLAN.md).
+The default run performs **20 checks**, creates its test data, and removes that data afterward. It tests cluster health, object integrity, listing, multipart, versioning/restoration, concurrent access, permissions, signed URLs, bucket policies/configuration, HTTP encryption rejection and real lifecycle processing. It uses one cluster and does not restart services or change global configuration. Full coverage is listed in [test plan](docs/test-plan.md).
 
 Use the self-contained archive on an internal node:
 
@@ -35,8 +35,13 @@ Additional commands are optional:
 ./run.sh lab --list            # explicitly configured advanced lab tests
 ```
 
-See [USAGE.md](USAGE.md) for details and [suite/README.md](suite/README.md) for the advanced lab. Replication, outages, maintenance, active retention and legal holds are never part of the default run. PASS covers the tested operations on the current deployment; it does not establish pre-upgrade application data integrity or inspect the servers' OS/kernel configuration.
+See [usage guide](docs/usage.md) for details and [lab guide](docs/lab.md) for the advanced lab. Replication, outages, maintenance, active retention and legal holds are never part of the default run. PASS covers the tested operations on the current deployment; it does not establish pre-upgrade application data integrity or inspect the servers' OS/kernel configuration.
 
-Build a transfer archive on a connected workstation with `python3 suite/package_release.py`. The output is `dist/tminio_test_runner.tar.gz` and its SHA-256 file. The allowlisted archive excludes local credentials, configuration and reports. To reuse pinned dependencies from a previously verified extracted archive, add `--vendor-from /path/to/extracted/archive`.
+Build a transfer archive on a connected workstation with `python3 scripts/package_release.py`. The output is `dist/tminio_test_runner.tar.gz` and its SHA-256 file. The allowlisted archive excludes local credentials, configuration and reports. To reuse pinned dependencies from a previously verified extracted archive, add `--vendor-from /path/to/extracted/archive`.
 
 The consolidated release suite was moved from the service repository's development release tests. Imported MinIO-derived code is distributed under [AGPL-3.0](LICENSE).
+
+Repository layout: application code in `src/tminio_test_runner/`, harness regressions in
+`tests/unit/`, advanced cluster tests in `tests/system/`, guides in `docs/`, examples
+in `config/`, and build/launch utilities in `scripts/`. See [repository layout](docs/repository-layout.md)
+for maintainer commands and packaging details.

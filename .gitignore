@@ -9,8 +9,7 @@ test-reports/
 reports/
 artifacts/
 dist/
-config.local.json
-service_inventory.local.json
+config/*.local.json
 .env
 .DS_Store
 .idea/

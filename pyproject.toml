@@ -1,0 +1,13 @@
+# This repository ships a self-contained test archive, not a PyPI distribution.
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["src", "scripts"]
+addopts = "-ra --strict-markers --import-mode=importlib"
+timeout = 2400
+markers = [
+  "integration: writes only uniquely named disposable test buckets",
+  "fault: requires explicitly enabled fault injection hooks",
+  "admin: changes cluster-wide settings; isolated dev cluster only",
+  "replication: requires a second independent cluster and mc",
+  "soak: longer concurrent workload",
+]

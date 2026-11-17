@@ -20,8 +20,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-          cache-dependency-path: suite/requirements-release.txt
-      - run: python -m pip install -r suite/requirements-release.txt
+          cache-dependency-path: requirements/release.txt
+      - run: python -m pip install -r requirements/release.txt
       - run: ./run.sh unit --artifacts test-reports/harness
       - uses: actions/upload-artifact@v4
         if: always()

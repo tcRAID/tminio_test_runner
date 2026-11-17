@@ -1,0 +1,1 @@
+"""MinIO endpoint test runner."""
