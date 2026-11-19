@@ -37,6 +37,14 @@ CORS HTTP 501 is reported explicitly as an unsupported bucket API, never as a su
 | Local source build / launched-server smoke | Retired from the public endpoint workflow; service repository owns builds |
 | Development release topology, split-object lifecycle, fault recovery, admin, movement, replication | Retained under `./run.sh lab GROUP`, configured independently |
 
+## Optional sustained activity
+
+`./run.sh soak URL` runs a separate five-minute soak with 32 clients. Each client rotates among 64 KiB, 1 MiB and 16 MiB objects and 32 key slots; each slot has an original and a copy key. Every completed cycle verifies original and copied bytes with streaming SHA-256 and size checks, HEAD and tags, versioned deletion, and a multipart part upload followed by abort. It then removes that cycle's data versions and delete marker.
+
+At the defaults, the workload can visit 2,048 distinct keys while keeping at most 96 live versions/markers and 32 pending uploads. Short runs might visit only part of the key set; the report records actual coverage. More keys and mixed sizes broaden the workload but do not prove coverage of every pool, erasure set or disk. No pool placement, fault injection, global configuration changes or second cluster is involved.
+
+Progress is printed every 30 seconds and statistics are saved during the run. Request logs rotate at 64 MiB with three backups, limiting that log set to approximately 256 MiB. Teardown uses the runner's in-memory ownership records and does not depend on retaining the complete request log. All reports remain after teardown. See [soak guide](soak.md) for longer runs and concurrency settings.
+
 The release's withdrawn merged noncurrent cleanup is not treated as a fixed feature. Default tests do not require split-object space reclamation. Forced pool placement, rebalance/decommission, node failures, replication, KMS/IAM integrations, console UI and performance qualification need separate lab or application checks.
 
 Validation evidence for this consolidation is recorded in [validation record](validation.md). Harness tests and a disposable HTTP fixture validate the runner; execution on the actual Ubuntu 26.04 cluster remains the deployment check.

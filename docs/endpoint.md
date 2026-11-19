@@ -115,7 +115,18 @@ or other independent evidence. No old deployment is required to run these checks
 The endpoint also cannot inspect server OS/kernel, storage mounts or systemd
 settings. These need inspection on the servers themselves.
 
+For sustained activity on the same endpoint, use the separate soak command:
+
+```bash
+./run.sh soak http://HOST:9000 --duration 3600
+```
+
+This runs 32 clients for one hour, rotating among 64 KiB, 1 MiB and 16 MiB
+objects. It creates and removes its own test data. Its deadline adjusts to the
+requested duration, so no additional timeout option is normally needed. See
+[soak guide](soak.md) for 24-hour runs, concurrency and report interpretation.
+
 Forced pool placement, threshold crossings, healing, fault injection,
-rebalance/decommission, external integrations, console login, long load tests
-and replication between clusters are outside this command. The configured dev
-suite is included separately and is never invoked automatically.
+rebalance/decommission, external integrations, console login and replication
+between clusters are outside the endpoint and soak commands. The configured
+lab suite is included separately and is never invoked automatically.

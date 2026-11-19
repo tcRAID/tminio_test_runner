@@ -30,10 +30,12 @@ Exit **0** means every selected check and teardown passed. Failed/incomplete che
 Additional commands are optional:
 
 ```bash
-./run.sh soak http://HOST:9000  # 5 minutes, 8 clients, bounded stored data
+./run.sh soak http://HOST:9000  # 5 minutes, 32 clients, mixed object sizes
 ./run.sh unit                  # harness tests; no endpoint or credentials
 ./run.sh lab --list            # explicitly configured advanced lab tests
 ```
+
+For sustained activity, run `./run.sh soak http://HOST:9000 --duration 3600` for one hour; the deadline adjusts automatically. The [soak guide](docs/soak.md) explains the workload, reports and longer runs.
 
 See [usage guide](docs/usage.md) for details and [lab guide](docs/lab.md) for the advanced lab. Replication, outages, maintenance, active retention and legal holds are never part of the default run. PASS covers the tested operations on the current deployment; it does not establish pre-upgrade application data integrity or inspect the servers' OS/kernel configuration.
 

@@ -10,7 +10,7 @@ Endpoint and credentials are prompted when omitted. HTTP is supported.
 Automation: MINIO_ENDPOINT, MINIO_ACCESS_KEY and MINIO_SECRET_KEY.
 
 Other commands:
-  ./run.sh soak http://HOST:9000   Bounded 5-minute, 8-client workload
+  ./run.sh soak http://HOST:9000   Bounded 5-minute, 32-client workload
   ./run.sh unit                   Local harness regression tests
   ./run.sh lab --list             Advanced tests requiring a disposable lab
   ./run.sh endpoint --help        Optional endpoint settings and defaults
@@ -31,7 +31,7 @@ def main(argv=None):
         print(HELP + "\nS3 endpoint options (optional):\n"
               "  --timeout 1800 --cleanup-timeout 300 --lifecycle-timeout 600\n"
               "  --work-dir . --region us-east-1 --expected-commit ID --ca-file CA.pem\n"
-              "  soak only: --duration 300\n")
+              "  soak only: --duration 300 --workers 32 (timeout grows automatically)\n")
         return 0
     if args and args[0] in ("source", "smoke"):
         print("Source builds and local-server smoke were retired. Use ./run.sh http://HOST:9000 against a running service.", file=sys.stderr)

@@ -17,7 +17,7 @@ import urllib.request
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from .binary_check import Deadline, GIB, NoRedirect, Suite, check
+from .binary_check import Deadline, GIB, NoRedirect, Suite, check, utcnow
 from .endpoint_cases import EndpointCases
 from .protocol_cases import ProtocolCases
 from .credentials import credentials
@@ -147,7 +147,14 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
                 self.known_keys.add((bucket, fields["key"]))
             for item in fields.get("objects") or []:
                 self.known_keys.add((bucket, item["Key"]))
-        super().event(kind, **fields)
+        if getattr(self, "request_log_limit", None):
+            from .request_log import append_event
+            rotated = append_event(self.directory / "requests.jsonl",
+                                   self.safe({"time": utcnow(), "check": self.case, "kind": kind, **fields}),
+                                   self.request_log_limit)
+            self.report["request_log"]["rotations"] += int(rotated)
+        else:
+            super().event(kind, **fields)
 
     def call(self, method, *, client=None, **kwargs):
         bucket = kwargs.get("Bucket")
@@ -393,7 +400,7 @@ def main(argv=None, *, soak=False):
         "Runs all 20 checks on the current service. No old version, saved baseline or binary path is needed."))
     parser.add_argument("endpoint", nargs="?", type=endpoint_url, default=os.getenv("MINIO_ENDPOINT"), help="S3 API URL, for example http://minio.internal:9000")
     parser.add_argument("--work-dir", default=".", help="existing directory for reports and temporary payloads")
-    parser.add_argument("--timeout", type=int, default=1800, help="overall deadline in seconds (default: 1800)")
+    parser.add_argument("--timeout", type=int, default=None, help="overall deadline (default: 1800; soak automatically allows duration + 600 seconds)")
     parser.add_argument("--cleanup-timeout", type=int, default=300, help="separate teardown deadline in seconds (default: 300)")
     parser.add_argument("--region", default="us-east-1", help="server region (default: us-east-1)")
     parser.add_argument("--ca-file", help="PEM CA bundle for an internal HTTPS certificate (TLS verification is always enabled)")
@@ -401,7 +408,12 @@ def main(argv=None, *, soak=False):
     parser.add_argument("--expected-commit", help="optional exact MinIO commit ID required on every server")
     if soak:
         parser.add_argument("--duration", type=int, default=300, help="soak duration in seconds (default: 300)")
+        parser.add_argument("--workers", type=int, default=32, help="concurrent soak clients, 1..128 (default: 32)")
     args = parser.parse_args(argv)
+    if soak and not 1 <= args.workers <= 128:
+        parser.error("--workers must be between 1 and 128")
+    if args.timeout is None:
+        args.timeout = max(1800, args.duration + 600) if soak else 1800
     if not args.endpoint:
         if not sys.stdin.isatty():
             parser.error("supply the endpoint URL or MINIO_ENDPOINT")
@@ -431,11 +443,13 @@ def main(argv=None, *, soak=False):
                               region=args.region, ca_file=args.ca_file)
         if soak:
             suite.check_names = ["Cluster health and identity", "Endpoint and test buckets", "Bounded soak", "Remove test buckets"]
-            suite.soak_seconds = args.duration
+            from .soak_cases import configure_soak
+            configure_soak(suite, args.duration, args.workers)
         suite.expected_commit = args.expected_commit
         suite.lifecycle_timeout = args.lifecycle_timeout
         suite.report["product"] = "MinIO release test for Ubuntu 26.04"
-        suite.report["scope"] = "Current-service checks on one running cluster with automatic test setup and teardown."
+        if not soak:
+            suite.report["scope"] = "Current-service checks on one running cluster with automatic test setup and teardown."
         suite.report["lifecycle_timeout_seconds"] = args.lifecycle_timeout
         suite.report["cleanup_timeout_seconds"] = args.cleanup_timeout
         print(f"MinIO release test for Ubuntu 26.04\nEndpoint: {suite.endpoint}\nReports: {suite.directory}\n"

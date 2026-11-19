@@ -2,6 +2,15 @@
 
 This runner combines the original endpoint/Locust coverage with the service repository's development release suite. The supported default is the current-service HTTP endpoint command with 20 checks and automatic setup/teardown. The bounded soak and configured lab are separate selections.
 
+Extended soak validation on 2026-11-19:
+
+- All 251 harness regressions passed from source and from the extracted archive launched from an unrelated directory, with spaces in the archive path. They include real repeated SIGINT/SIGTERM/SIGALRM during worker shutdown, automatic one-hour/24-hour deadlines, streaming checksums, key reuse, lost responses and request-log rotation.
+- The verified archive ran in a private network namespace against a disposable, single-process MinIO fixture with two pools and eight directory drives. The unmodified 32-client workload ran for 45 seconds, completing 421 cycles and checking 5,106,040,832 bytes across all three object sizes and 842 distinct keys. A 10-second, 64-client workload completed 107 cycles, also covering all sizes. These are shortened correctness checks, not performance benchmarks.
+- SIGINT and an injected deadline after positive live progress, plus a deliberately lost multipart-create response after the upload and a part were committed, all returned FAIL with successful teardown. A forced 8 KiB request-log limit rotated 33 times, retained at most four bounded files, and still cleaned all test data.
+- Each scenario preserved an unrelated bucket's object bytes, versions, delete marker and pending multipart upload. The original fixture process remained running until validation explicitly stopped it; its disposable data was then removed.
+
+The fixture binary was `DEVELOPMENT.2026-06-12T00-50-31Z`, commit `2f0f5c40587db38a1832f8a85942bcb5881f7621`, SHA-256 `6cef72876d8f9d9e30776a5478b15a43e346a155a90dbb15495077f9a9726f6c`. The host was Ubuntu 22.04.5 x86_64, Python 3.10.12. This evidence validates the extended runner and teardown behavior; it does not claim a full one-hour/24-hour run, execution on the user's six-node SSD cluster, or validation of the current release on Ubuntu 26.04. Use the [soak guide](soak.md) to perform that deployment check.
+
 Revalidated after the repository layout change on 2026-11-17:
 
 - All 224 local harness regressions passed from the source launcher and extracted archive. The archive was launched from another working directory with spaces in its path. They cover endpoint ownership, teardown, reporting, credential aliases, packaging integrity, group selection, fault recovery and hook supervision.
