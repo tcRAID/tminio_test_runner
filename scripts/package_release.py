@@ -19,6 +19,7 @@ from bundle_bootstrap import verify_bundle
 # Deliberate allowlist: never package local config, logs, private mc aliases,
 # credentials, virtual environments or test data from the working directory.
 SOURCE_FILES = """
+.gitignore
 LICENSE
 README.md
 run.sh
