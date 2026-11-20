@@ -152,8 +152,8 @@ def server_environment(access, secret):
     return env
 
 
-def client_config():
-    return Config(signature_version="s3v4", connect_timeout=5, read_timeout=60,
+def client_config(*, read_timeout=60):
+    return Config(signature_version="s3v4", connect_timeout=5, read_timeout=read_timeout,
                   retries={"mode": "standard", "total_max_attempts": 1},
                   proxies={}, s3={"addressing_style": "path"},
                   request_checksum_calculation="when_required", response_checksum_validation="when_required")
@@ -239,11 +239,20 @@ class Suite:
                                       "SessionToken": self.session_token}
         client = boto3.session.Session().client(service, endpoint_url=self.endpoint, region_name=self.region, verify=self.verify_tls,
             aws_access_key_id=credentials["AccessKeyId"], aws_secret_access_key=credentials["SecretAccessKey"],
-            aws_session_token=credentials.get("SessionToken"), config=client_config())
+            aws_session_token=credentials.get("SessionToken"),
+            config=client_config(read_timeout=getattr(self, "read_timeout", 60)))
         self.clients.append(client)
         return client
 
-    def call(self, method, *, client=None, **kwargs):
+    def call(self, method, *, client=None, retry_expected_status=None, **kwargs):
+        if getattr(self, "http503_retry_limit", 0):
+            from .request_retry import call_with_503_retries
+            return call_with_503_retries(self, method, kwargs,
+                                        lambda: self.call_once(method, client=client, **kwargs),
+                                        expected_status=retry_expected_status)
+        return self.call_once(method, client=client, **kwargs)
+
+    def call_once(self, method, *, client=None, **kwargs):
         if method in {"put_object", "copy_object", "delete_object", "delete_objects", "create_multipart_upload",
                       "upload_part", "complete_multipart_upload", "abort_multipart_upload"}:
             # Durable intent before sending the request. Never records request bodies/secrets.
@@ -275,7 +284,7 @@ class Suite:
 
     def error(self, method, codes, *, status=None, client=None, **args):
         try:
-            result = self.call(method, client=client, **args)
+            result = self.call(method, client=client, retry_expected_status=status, **args)
         except ClientError as error:
             actual = error.response["Error"]["Code"]
             check(actual in codes, f"{method}: expected {sorted(codes)}, got {actual}")
@@ -765,6 +774,11 @@ class Suite:
         return (self.directory / "data").exists()
 
     def finish(self):
+        retry = self.report.get("http_503_retry", {})
+        if (retry.get("exhausted_requests", 0) or retry.get("unreplayable_requests", 0)) and all(
+                result["status"] == "PASS" for result in self.report["results"]):
+            self.report["results"].append({"name": "HTTP 503 retry policy", "status": "FAIL", "seconds": 0,
+                "actual": "A request exhausted or could not use its HTTP 503 retries; later cleanup recovery does not erase this failure."})
         completed = {r["name"] for r in self.report["results"]}
         for name in self.check_names:
             if name not in completed:
@@ -783,6 +797,11 @@ class Suite:
                  f"Runner host: {self.report['platform']}", f"Endpoint: {self.endpoint}", ""]
         if self.binary:
             lines[1:1] = [f"Binary: {self.binary}", f"SHA-256: {self.report.get('artifact_sha256', 'not available')}"]
+        if retry:
+            lines += [f"HTTP 503 responses: {retry['responses']}; retries: {retry['retries']}; "
+                      f"recovered requests: {retry['recovered_requests']}; exhausted requests: {retry['exhausted_requests']}; "
+                      f"failed requests: {retry['failed_requests']}",
+                      "Full retry history, when present: retry-events.jsonl", ""]
         suite = ET.Element("testsuite", name="minio-ubuntu-runtime", tests=str(len(self.report["results"])),
                            failures=str(sum(r["status"] != "PASS" for r in self.report["results"])))
         for result in self.report["results"]:

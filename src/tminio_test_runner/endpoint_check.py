@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 from pathlib import Path
 import shutil
@@ -57,8 +58,11 @@ def endpoint_url(value):
 class EndpointSuite(ProtocolCases, EndpointCases, Suite):
     check_names = CHECK_NAMES
 
-    def __init__(self, endpoint, access, secret, parent, timeout=1800, *, region="us-east-1", ca_file=None):
+    def __init__(self, endpoint, access, secret, parent, timeout=1800, *, region="us-east-1", ca_file=None,
+                 read_timeout=60):
         endpoint = endpoint_url(endpoint)
+        if read_timeout <= 0:
+            raise ValueError("read timeout must be positive")
         context = ssl.create_default_context(cafile=ca_file)
         self.binary = None
         self.state_lock = threading.RLock()
@@ -76,6 +80,7 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
         self.access, self.secret = access, secret
         self.secrets = [access, secret]
         self.region = region
+        self.read_timeout = read_timeout
         self.verify_tls = str(Path(ca_file).resolve(strict=True)) if ca_file else True
         self.http = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), NoRedirect(),
@@ -84,6 +89,7 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
         self.bucket, self.versioned_bucket, self.lifecycle_bucket = (prefix + suffix for suffix in ("-obj", "-ver", "-ilm"))
         self.planned_buckets = {self.bucket, self.versioned_bucket, self.lifecycle_bucket}
         self.report.update(mode="endpoint", endpoint=self.endpoint, region=region,
+            read_timeout_seconds=read_timeout,
             tls_verification=self.verify_tls if self.endpoint.startswith("https:") else None, planned_buckets=sorted(self.planned_buckets),
             owned_buckets=[], uncertain_buckets=[], not_covered=NOT_COVERED,
             scope="S3 checks against the supplied service, using only this run's new test buckets.",
@@ -147,6 +153,12 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
                 self.known_keys.add((bucket, fields["key"]))
             for item in fields.get("objects") or []:
                 self.known_keys.add((bucket, item["Key"]))
+        if getattr(self, "http503_retry_limit", 0):
+            from .request_retry import RETRY_EVENT_KINDS
+            if kind in RETRY_EVENT_KINDS:
+                event = self.safe({"time": utcnow(), "check": self.case, "kind": kind, **fields})
+                with (self.directory / "retry-events.jsonl").open("a") as output:
+                    output.write(json.dumps(event, default=str) + "\n")
         if getattr(self, "request_log_limit", None):
             from .request_log import append_event
             rotated = append_event(self.directory / "requests.jsonl",
@@ -156,7 +168,7 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
         else:
             super().event(kind, **fields)
 
-    def call(self, method, *, client=None, **kwargs):
+    def call(self, method, *, client=None, retry_expected_status=None, **kwargs):
         bucket = kwargs.get("Bucket")
         if method == "assume_role":
             check(client is not None and bucket is None, "invalid STS call")
@@ -171,7 +183,7 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
                   "copy source outside this run's buckets refused")
         if method == "put_bucket_lifecycle_configuration":
             self.lifecycle_buckets.add(bucket)  # Include a configuration whose response might be lost.
-        result = super().call(method, client=client, **kwargs)
+        result = super().call(method, client=client, retry_expected_status=retry_expected_status, **kwargs)
         if kwargs.get("Key") is not None:
             if result.get("VersionId"):
                 self.known_versions.add((bucket, kwargs["Key"], result["VersionId"]))
@@ -189,7 +201,7 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
         # A 128-bit random name plus a prior absence check prevents adopting any
         # pre-existing bucket, including one owned by the supplied credentials.
         try:
-            super().call("head_bucket", Bucket=bucket)
+            super().call("head_bucket", Bucket=bucket, retry_expected_status=404)
         except ClientError as error:
             check(error.response["ResponseMetadata"]["HTTPStatusCode"] == 404,
                   "cannot establish that the new test bucket is absent (need bucket creation permissions)")
@@ -256,11 +268,13 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
         self.untagged_buckets.discard(bucket)
         self.record_ownership()
 
-    def cleanup_uploads(self, bucket):
+    def cleanup_uploads(self, bucket, *, prefix=None, client=None):
         """List every pending upload, including uploads whose creation response was lost."""
         args, uploads, seen = {"Bucket": bucket}, [], set()
+        if prefix is not None:
+            args["Prefix"] = prefix
         for _ in range(10000):
-            page = self.call("list_multipart_uploads", **args)
+            page = self.call("list_multipart_uploads", client=client, **args)
             uploads.extend(page.get("Uploads", []))
             if not page.get("IsTruncated"):
                 return uploads
@@ -287,7 +301,7 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
         # bypass the normal owned-bucket guard; no global discovery or adoption.
         inspect = super().call if bucket in self.uncertain_buckets else self.call
         try:
-            tags = inspect("get_bucket_tagging", Bucket=bucket).get("TagSet", [])
+            tags = inspect("get_bucket_tagging", Bucket=bucket, retry_expected_status=404).get("TagSet", [])
         except ClientError as error:
             code = error.response.get("Error", {}).get("Code")
             if code == "NoSuchBucket":
@@ -327,7 +341,7 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
                 self.lifecycle_buckets.discard(bucket)
             for upload in uploads:
                 try:
-                    self.call("abort_multipart_upload", Bucket=bucket, Key=upload["Key"], UploadId=upload["UploadId"])
+                    self.call("abort_multipart_upload", Bucket=bucket, Key=upload["Key"], UploadId=upload["UploadId"], retry_expected_status=404)
                 except ClientError as error:
                     if error.response.get("Error", {}).get("Code") != "NoSuchUpload":
                         raise
@@ -401,6 +415,7 @@ def main(argv=None, *, soak=False):
     parser.add_argument("endpoint", nargs="?", type=endpoint_url, default=os.getenv("MINIO_ENDPOINT"), help="S3 API URL, for example http://minio.internal:9000")
     parser.add_argument("--work-dir", default=".", help="existing directory for reports and temporary payloads")
     parser.add_argument("--timeout", type=int, default=None, help="overall deadline (default: 1800; soak automatically allows duration + 600 seconds)")
+    parser.add_argument("--read-timeout", type=int, default=60, help="SDK socket read timeout in seconds (default: 60)")
     parser.add_argument("--cleanup-timeout", type=int, default=300, help="separate teardown deadline in seconds (default: 300)")
     parser.add_argument("--region", default="us-east-1", help="server region (default: us-east-1)")
     parser.add_argument("--ca-file", help="PEM CA bundle for an internal HTTPS certificate (TLS verification is always enabled)")
@@ -410,6 +425,8 @@ def main(argv=None, *, soak=False):
         parser.add_argument("--duration", type=int, default=300, help="soak duration in seconds (default: 300)")
         parser.add_argument("--workers", type=int, default=32, help="concurrent soak clients, 1..128 (default: 32)")
     args = parser.parse_args(argv)
+    if args.read_timeout <= 0:
+        parser.error("--read-timeout must be positive")
     if soak and not 1 <= args.workers <= 128:
         parser.error("--workers must be between 1 and 128")
     if args.timeout is None:
@@ -440,7 +457,7 @@ def main(argv=None, *, soak=False):
         raise KeyboardInterrupt
     try:
         suite = EndpointSuite(args.endpoint, access, secret, args.work_dir, args.timeout,
-                              region=args.region, ca_file=args.ca_file)
+                              region=args.region, ca_file=args.ca_file, read_timeout=args.read_timeout)
         if soak:
             suite.check_names = ["Cluster health and identity", "Endpoint and test buckets", "Bounded soak", "Remove test buckets"]
             from .soak_cases import configure_soak
@@ -515,6 +532,12 @@ def main(argv=None, *, soak=False):
                 signal.signal(signum, handler)
     if suite.data_retained():
         print("Cleanup incomplete. Remaining test bucket names and cleanup errors are in results.json.", flush=True)
+    if soak:
+        retry = suite.report["http_503_retry"]
+        print(f"HTTP 503 responses: {retry['responses']}; retries: {retry['retries']}; "
+              f"recovered requests: {retry['recovered_requests']}; exhausted requests: {retry['exhausted_requests']}; "
+              f"failed requests: {retry['failed_requests']}. "
+              "Full retry history, when present: retry-events.jsonl", flush=True)
     return suite.finish()
 
 

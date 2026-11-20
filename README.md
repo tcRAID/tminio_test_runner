@@ -35,7 +35,7 @@ Additional commands are optional:
 ./run.sh lab --list            # explicitly configured advanced lab tests
 ```
 
-For sustained activity, run `./run.sh soak http://HOST:9000 --duration 3600` for one hour; the deadline adjusts automatically. The [soak guide](docs/soak.md) explains the workload, reports and longer runs.
+For sustained activity, run `./run.sh soak http://HOST:9000 --duration 3600` for one hour; the deadline adjusts automatically. Soak automatically retries HTTP 503 responses up to twice and reports every recovery or exhausted retry. A soak PASS can include recovered 503s; workload socket read timeouts fail the check. Teardown independently retries bucket cleanup after transient failures. The [soak guide](docs/soak.md) explains the workload, reports and longer runs.
 
 See [usage guide](docs/usage.md) for details and [lab guide](docs/lab.md) for the advanced lab. Replication, outages, maintenance, active retention and legal holds are never part of the default run. PASS covers the tested operations on the current deployment; it does not establish pre-upgrade application data integrity or inspect the servers' OS/kernel configuration.
 

@@ -40,6 +40,13 @@ def _drain_workers(executor, stop):
 def configure_soak(suite, seconds, workers):
     suite.soak_seconds, suite.soak_workers, suite.soak_key_slots = seconds, workers, KEY_SLOTS
     suite.request_log_limit = REQUEST_LOG_BYTES
+    suite.http503_retry_limit = 2
+    suite.retry_reconcile_keys = set()
+    suite.report["http_503_retry"] = {
+        "max_retries": 2, "max_attempts": 3, "responses": 0, "retries": 0,
+        "recovered_requests": 0, "exhausted_requests": 0, "unreplayable_requests": 0,
+        "failed_requests": 0, "events_file": "retry-events.jsonl",
+    }
     suite.report.update(mode="soak", object_sizes=list(OBJECT_SIZES),
                         scope="Mixed-size sustained S3 correctness on one running cluster; automatic setup and teardown.")
     for name in ("multipart_bytes", "multipart_part_bytes", "listing_keys", "overwrite_cycles"):
@@ -57,9 +64,38 @@ def configure_soak(suite, seconds, workers):
         "object_sizes": list(OBJECT_SIZES), "cycles_per_worker": [0] * workers,
         "cycles_per_size": {str(size): 0 for size in OBJECT_SIZES},
         "unique_keys_used": 0, "bytes_verified": 0, "elapsed_seconds": 0,
-        "max_keys": workers * KEY_SLOTS * 2, "max_live_versions_and_markers": workers * 3,
-        "max_pending_uploads": workers, "state": "not started",
+        "max_keys": workers * KEY_SLOTS * 2, "max_live_versions_and_markers": workers * 9,
+        "max_pending_uploads": workers * 3, "normal_max_live_versions_and_markers": workers * 3,
+        "normal_max_pending_uploads": workers, "state": "not started",
     }
+
+
+def reconcile_retried_keys(suite, bucket, keys, client):
+    """Remove possible committed 503 attempts from this worker's exact keys."""
+    with suite.state_lock:
+        pending = [(bucket, key) for key in keys if (bucket, key) in suite.retry_reconcile_keys]
+    failures = []
+    for _, key in pending:
+        try:
+            check((bucket, key) in suite.known_keys, "retry cleanup outside recorded key intent refused")
+            for upload in suite.cleanup_uploads(bucket, prefix=key, client=client):
+                if upload["Key"] == key:
+                    suite.call("abort_multipart_upload", client=client, Bucket=bucket, Key=key, UploadId=upload["UploadId"])
+                    with suite.state_lock:
+                        suite.known_uploads.discard((bucket, key, upload["UploadId"]))
+            versions = [version for page in suite.pages("list_object_versions", client=client, Bucket=bucket, Prefix=key)
+                        for field in ("Versions", "DeleteMarkers") for version in page.get(field, []) if version["Key"] == key]
+            for version in versions:
+                suite.call("delete_object", client=client, Bucket=bucket, Key=key, VersionId=version["VersionId"])
+                with suite.state_lock:
+                    suite.known_versions.discard((bucket, key, version["VersionId"]))
+            with suite.state_lock:
+                suite.retry_reconcile_keys.discard((bucket, key))
+            suite.event("retry_key_reconciled", bucket=bucket, key=key)
+        except Exception as error:
+            failures.append(error)
+    if failures:
+        raise AssertionError("could not reconcile keys after HTTP 503") from failures[0]
 
 
 def bounded_soak(suite):
@@ -160,6 +196,10 @@ def bounded_soak(suite):
                                 suite.known_versions.discard((bucket, name, vid))
                         except Exception as error:
                             failures.append(error)
+                    try:
+                        reconcile_retried_keys(suite, bucket, (key, copy), client)
+                    except Exception as error:
+                        failures.append(error)
                     data = None
                     if failures:
                         raise AssertionError(f"soak cycle cleanup failed for {len(failures)} resources") from failures[0]
