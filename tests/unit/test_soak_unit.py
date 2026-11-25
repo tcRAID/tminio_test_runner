@@ -115,11 +115,13 @@ class StreamingBytes(io.BytesIO):
 
 class MemorySoak:
     """A version-aware in-memory endpoint, with optional request corruption."""
-    def __init__(self, fail_operation=None, corrupt=False):
+    def __init__(self, fail_operation=None, corrupt=False, corrupt_multipart=False):
         self.state_lock = threading.RLock()
         self.report = {"not_covered": []}
         self.known_keys, self.known_versions, self.known_uploads = set(), set(), set()
         self.versions, self.uploads, self.tags, self.metadata = {}, {}, {}, {}
+        self.parts, self.upload_metadata = {}, {}
+        self.corrupt_multipart = corrupt_multipart
         self.operations, self.put_keys, self.put_sizes = [], [], []
         self.max_versions = self.max_uploads = self.serial = self.completed = self.saved = 0
         self.fail_operation, self.corrupt = fail_operation, corrupt
@@ -198,14 +200,32 @@ class MemorySoak:
             self.serial += 1
             upload = str(self.serial)
             self.uploads[upload] = Key
+            self.upload_metadata[upload] = kwargs.get("Metadata", {})
             self.known_uploads.add((Bucket, Key, upload))
             self.max_uploads = max(self.max_uploads, len(self.uploads))
             return {"UploadId": upload}
         if operation == "upload_part":
             assert kwargs["UploadId"] in self.uploads
+            self.parts[kwargs["UploadId"]] = kwargs["Body"]
             return {"ETag": "part"}
+        if operation == "complete_multipart_upload":
+            upload = kwargs["UploadId"]
+            assert self.uploads[upload] == Key
+            assert kwargs["MultipartUpload"] == {"Parts": [{"PartNumber": 1, "ETag": "part"}]}
+            self.serial += 1
+            version = str(self.serial)
+            self.versions[version] = (Key, self.parts.pop(upload))
+            self.metadata[version] = self.upload_metadata.pop(upload)
+            self.known_versions.add((Bucket, Key, version))
+            self.max_versions = max(self.max_versions, len(self.versions))
+            del self.uploads[upload]
+            if self.corrupt_multipart:
+                self.corrupt = True
+            return {"VersionId": version}
         if operation == "abort_multipart_upload":
-            del self.uploads[kwargs["UploadId"]]
+            self.uploads.pop(kwargs["UploadId"], None)
+            self.parts.pop(kwargs["UploadId"], None)
+            self.upload_metadata.pop(kwargs["UploadId"], None)
             return {}
         raise AssertionError("unexpected operation " + operation)
 
@@ -224,10 +244,13 @@ def test_soak_uses_every_object_size_and_cleans_versions_uploads(monkeypatch):
     assert suite.put_sizes == list(soak_cases.OBJECT_SIZES)
     assert not suite.versions and not suite.uploads
     assert not suite.known_versions and not suite.known_uploads
-    assert suite.max_versions == 3 and suite.max_uploads == 1
+    assert suite.max_versions == 4 and suite.max_uploads == 1
     assert suite.report["soak"]["cycles_per_worker"] == [3]
     assert suite.report["soak"]["cycles_per_size"] == {str(size): 1 for size in soak_cases.OBJECT_SIZES}
-    assert suite.report["soak"]["bytes_verified"] == 2 * sum(soak_cases.OBJECT_SIZES)
+    assert suite.report["soak"]["bytes_verified"] == 3 * sum(soak_cases.OBJECT_SIZES)
+    assert suite.operations.count("complete_multipart_upload") == 3
+    assert suite.operations.count("get_object") == 9
+    assert "abort_multipart_upload" not in suite.operations
     assert suite.report["soak"]["state"] == "finished"
 
 
@@ -241,12 +264,14 @@ def test_key_rotation_is_bounded_and_reuses_slots(monkeypatch):
     assert not suite.versions and not suite.uploads
 
 
-@pytest.mark.parametrize("failure", ["checksum", "upload_part"])
+@pytest.mark.parametrize("failure", ["checksum", "upload_part", "complete_multipart_upload", "multipart_checksum"])
 def test_soak_failure_preserves_partial_statistics_and_removes_cycle_data(monkeypatch, failure):
-    suite = MemorySoak(fail_operation="upload_part" if failure == "upload_part" else None,
-                       corrupt=failure == "checksum")
-    with pytest.raises((AssertionError, RuntimeError), match="checksum|upload_part"):
+    failed_upload = failure in ("upload_part", "complete_multipart_upload")
+    suite = MemorySoak(fail_operation=failure if failed_upload else None,
+                       corrupt=failure == "checksum", corrupt_multipart=failure == "multipart_checksum")
+    with pytest.raises((AssertionError, RuntimeError), match="checksum|upload_part|complete_multipart_upload"):
         run_memory_soak(monkeypatch, suite, 3)
+    assert suite.operations.count("abort_multipart_upload") == int(failed_upload)
     assert not suite.versions and not suite.uploads
     assert not suite.known_versions and not suite.known_uploads
     assert suite.report["soak"]["cycles_per_worker"] == [0]
@@ -254,7 +279,7 @@ def test_soak_failure_preserves_partial_statistics_and_removes_cycle_data(monkey
     assert suite.report["soak"]["state"] == "interrupted or failed"
 
 
-def test_failed_worker_stops_sibling_before_new_work_but_allows_cleanup(monkeypatch):
+def test_failed_worker_allows_sibling_to_finish_started_cycle_before_stopping(monkeypatch):
     stop, sibling_started = threading.Event(), threading.Event()
     class SiblingSoak(MemorySoak):
         def __init__(self):
@@ -286,12 +311,58 @@ def test_failed_worker_stops_sibling_before_new_work_but_allows_cleanup(monkeypa
     soak_cases.configure_soak(suite, 300, 2)
     with pytest.raises(RuntimeError, match="worker zero failed"):
         soak_cases.bounded_soak(suite)
-    assert suite.sibling_operations == ["put_object", "delete_object"]
+    assert suite.sibling_operations.count("put_object") == 1
+    assert suite.sibling_operations.count("complete_multipart_upload") == 1
+    assert "abort_multipart_upload" not in suite.sibling_operations
     assert not suite.versions and not suite.uploads and not suite.known_versions
-    assert suite.report["soak"]["cycles_per_worker"] == [0, 0]
+    assert suite.report["soak"]["cycles_per_worker"] == [0, 1]
 
 
-@pytest.mark.parametrize("operation", ["put_object", "create_multipart_upload"])
+def test_upload_failure_signals_stop_before_waiting_for_abort_cleanup(monkeypatch):
+    stop, sibling_started, sibling_finished = threading.Event(), threading.Event(), threading.Event()
+
+    class SlowCleanupSoak(MemorySoak):
+        def __init__(self):
+            super().__init__()
+            self.client_count, self.sibling_puts, self.aborts = 0, 0, []
+
+        def make_client(self):
+            index = self.client_count
+            self.client_count += 1
+            return SimpleNamespace(index=index)
+
+        def call(self, operation, *, client=None, **kwargs):
+            if client.index == 0 and operation == "upload_part":
+                assert sibling_started.wait(3), "sibling never started"
+                raise RuntimeError("worker zero part failed")
+            if operation == "abort_multipart_upload":
+                self.aborts.append(client.index)
+                assert stop.is_set(), "failed upload cleanup began before stopping new cycles"
+                assert sibling_finished.wait(3), "started sibling cycle could not finish during cleanup"
+            with self.state_lock:
+                response = super().call(operation, client=client, **kwargs)
+                if client.index == 1 and operation == "put_object":
+                    self.sibling_puts += 1
+                if (client.index == 1 and operation == "delete_object" and "VersionId" in kwargs
+                        and not any(name.startswith("worker-1/") for name, _ in self.versions.values())):
+                    sibling_finished.set()
+            if client.index == 1 and operation == "put_object":
+                sibling_started.set()
+                assert stop.wait(3), "failure did not stop new cycles before cleanup"
+            return response
+
+    suite = SlowCleanupSoak()
+    monkeypatch.setattr(soak_cases, "threading", SimpleNamespace(
+        Event=lambda: stop, current_thread=threading.current_thread, main_thread=threading.main_thread))
+    soak_cases.configure_soak(suite, 300, 2)
+    with pytest.raises(RuntimeError, match="worker zero part failed"):
+        soak_cases.bounded_soak(suite)
+    assert suite.sibling_puts == 1 and suite.aborts == [0]
+    assert not suite.versions and not suite.uploads
+    assert suite.report["soak"]["cycles_per_worker"] == [0, 1]
+
+
+@pytest.mark.parametrize("operation", ["put_object", "create_multipart_upload", "complete_multipart_upload"])
 def test_lost_mutation_response_retains_key_for_global_teardown(monkeypatch, operation):
     class LostResponseSoak(MemorySoak):
         def call(self, method, *, client=None, Bucket, Key, **kwargs):
@@ -299,8 +370,10 @@ def test_lost_mutation_response_retains_key_for_global_teardown(monkeypatch, ope
             if method == operation:
                 # The server accepted the mutation, but the client cannot know
                 # its returned version/upload ID. Ownership comes from key intent.
-                if method == "put_object":
+                if method in ("put_object", "complete_multipart_upload"):
                     self.known_versions.discard((Bucket, Key, response["VersionId"]))
+                    if method == "complete_multipart_upload":
+                        self.known_uploads.discard((Bucket, Key, kwargs["UploadId"]))
                 else:
                     self.known_uploads.discard((Bucket, Key, response["UploadId"]))
                 raise OSError("injected lost response")
@@ -316,12 +389,13 @@ def test_lost_mutation_response_retains_key_for_global_teardown(monkeypatch, ope
 
 
 @pytest.mark.parametrize("repeat_signal", [None, signal.SIGINT, signal.SIGTERM, signal.SIGALRM])
-def test_controller_interruption_joins_worker_and_cleans_inflight_data(monkeypatch, repeat_signal):
+@pytest.mark.parametrize("inflight_operation", ["put_object", "upload_part"])
+def test_controller_interruption_finishes_cycle_before_cleanup(monkeypatch, repeat_signal, inflight_operation):
     stop, started = threading.Event(), threading.Event()
     class InterruptedSoak(MemorySoak):
         def call(self, operation, **kwargs):
             response = super().call(operation, **kwargs)
-            if operation == "put_object":
+            if operation == inflight_operation:
                 started.set()
                 assert stop.wait(3), "controller failed to stop active worker"
                 if repeat_signal is not None:
@@ -350,9 +424,33 @@ def test_controller_interruption_joins_worker_and_cleans_inflight_data(monkeypat
     finally:
         if repeat_signal is not None:
             signal.signal(repeat_signal, old_handler)
-    assert suite.operations == ["put_object", "delete_object"]
-    assert not suite.versions and not suite.known_versions
+    assert suite.operations.count("put_object") == 1
+    assert suite.operations.count("complete_multipart_upload") == 1
+    assert suite.operations.count("get_object") == 3
+    assert "abort_multipart_upload" not in suite.operations
+    assert not suite.versions and not suite.known_versions and not suite.uploads
+    assert suite.report["soak"]["cycles_per_worker"] == [1]
     assert suite.report["soak"]["state"] == "interrupted or failed"
+
+
+def test_duration_expiring_during_part_upload_still_completes_and_verifies(monkeypatch):
+    class ExpiringSoak(MemorySoak):
+        now = 100
+        def call(self, operation, **kwargs):
+            result = super().call(operation, **kwargs)
+            if operation == "upload_part":
+                self.now = 10000
+            return result
+    suite = ExpiringSoak()
+    monkeypatch.setattr(soak_cases, "time", SimpleNamespace(monotonic=lambda: suite.now))
+    soak_cases.configure_soak(suite, 300, 1)
+    soak_cases.bounded_soak(suite)
+    assert suite.operations.count("complete_multipart_upload") == 1
+    assert suite.operations.count("get_object") == 3
+    assert "abort_multipart_upload" not in suite.operations
+    assert not suite.versions and not suite.uploads
+    assert suite.report["soak"]["cycles_per_worker"] == [1]
+    assert suite.report["soak"]["state"] == "finished"
 
 
 def test_cycle_cleanup_failure_still_attempts_other_versions(monkeypatch):
@@ -370,7 +468,7 @@ def test_cycle_cleanup_failure_still_attempts_other_versions(monkeypatch):
     suite = CleanupFailureSoak()
     with pytest.raises(AssertionError, match="cleanup failed"):
         run_memory_soak(monkeypatch, suite, 3)
-    assert len(suite.deleted_versions) == 3
+    assert len(suite.deleted_versions) == 4
     assert len(suite.versions) == len(suite.known_versions) == 1
     assert not suite.uploads
     assert suite.report["soak"]["cycles_per_worker"] == [0]

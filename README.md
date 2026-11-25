@@ -37,6 +37,10 @@ Additional commands are optional:
 
 For sustained activity, run `./run.sh soak http://HOST:9000 --duration 3600` for one hour; the deadline adjusts automatically. The [soak guide](docs/soak.md) explains the workload, reports and longer runs.
 
+Soak completes and verifies multipart uploads, and waits for started cycles to
+finish before teardown. It aborts only failed or unacknowledged uploads during
+cleanup. Stale upload-list entries are checked with `ListParts` before cleanup.
+
 See [usage guide](docs/usage.md) for details and [lab guide](docs/lab.md) for the advanced lab. Replication, outages, maintenance, active retention and legal holds are never part of the default run. PASS covers the tested operations on the current deployment; it does not establish pre-upgrade application data integrity or inspect the servers' OS/kernel configuration.
 
 Build a transfer archive on a connected workstation with `python3 scripts/package_release.py`. The output is `dist/tminio_test_runner.tar.gz` and its SHA-256 file. The allowlisted archive excludes local credentials, configuration and reports. To reuse pinned dependencies from a previously verified extracted archive, add `--vendor-from /path/to/extracted/archive`.

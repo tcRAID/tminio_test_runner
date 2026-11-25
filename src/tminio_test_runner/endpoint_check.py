@@ -263,6 +263,23 @@ class EndpointSuite(ProtocolCases, EndpointCases, Suite):
             page = self.call("list_multipart_uploads", **args)
             uploads.extend(page.get("Uploads", []))
             if not page.get("IsTruncated"):
+                if getattr(self, "soak_workers", 0):
+                    # A peer's upload cache can retain completed/aborted IDs.
+                    # Verify existence before treating an entry as a leak or
+                    # aborting it during soak cleanup. Empty active uploads
+                    # still need cleanup; only NoSuchUpload proves absence.
+                    active = []
+                    for upload in uploads:
+                        try:
+                            self.call("list_parts", Bucket=bucket, Key=upload["Key"],
+                                      UploadId=upload["UploadId"], MaxParts=1)
+                        except ClientError as error:
+                            if (error.response.get("Error", {}).get("Code") != "NoSuchUpload" or
+                                    error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 404):
+                                raise
+                        else:
+                            active.append(upload)
+                    return active
                 return uploads
             token = page.get("NextKeyMarker"), page.get("NextUploadIdMarker")
             check(all(token) and token not in seen, "missing/repeated multipart marker")

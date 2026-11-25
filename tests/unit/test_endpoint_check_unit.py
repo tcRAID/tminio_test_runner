@@ -239,3 +239,53 @@ def test_teardown_cannot_pass_if_remote_data_was_not_removed(suite, monkeypatch)
         suite.teardown()
     assert not suite.payloads.exists()
     assert suite.data_retained()
+
+
+def test_soak_upload_listing_confirms_absence_and_keeps_empty_active_uploads(suite):
+    suite.soak_workers = 1
+    suite.owned_buckets.add(suite.bucket)
+    uploads = [{"Key": "data", "UploadId": upload} for upload in ("completed", "empty", "pending")]
+    with Stubber(suite.client) as stub:
+        stub.add_response("list_multipart_uploads", {"Uploads": uploads}, {"Bucket": suite.bucket})
+        stub.add_client_error("list_parts", service_error_code="NoSuchUpload", http_status_code=404,
+                              expected_params={"Bucket": suite.bucket, **uploads[0], "MaxParts": 1})
+        stub.add_response("list_parts", {"Parts": []}, {"Bucket": suite.bucket, **uploads[1], "MaxParts": 1})
+        stub.add_response("list_parts", {"Parts": [{"PartNumber": 1, "ETag": "part"}]},
+                          {"Bucket": suite.bucket, **uploads[2], "MaxParts": 1})
+        assert suite.cleanup_uploads(suite.bucket) == uploads[1:]
+        stub.assert_no_pending_responses()
+
+
+@pytest.mark.parametrize("code,status", [("AccessDenied", 403), ("NoSuchBucket", 404), ("NoSuchUpload", 500)])
+def test_soak_upload_listing_does_not_hide_other_errors(suite, code, status):
+    suite.soak_workers = 1
+    suite.owned_buckets.add(suite.bucket)
+    upload = {"Key": "data", "UploadId": "pending"}
+    with Stubber(suite.client) as stub:
+        stub.add_response("list_multipart_uploads", {"Uploads": [upload]}, {"Bucket": suite.bucket})
+        stub.add_client_error("list_parts", service_error_code=code, http_status_code=status,
+                              expected_params={"Bucket": suite.bucket, **upload, "MaxParts": 1})
+        with pytest.raises(endpoint.ClientError):
+            suite.cleanup_uploads(suite.bucket)
+        stub.assert_no_pending_responses()
+
+
+@pytest.mark.parametrize("method", ["put_object", "upload_part", "complete_multipart_upload"])
+def test_soak_503_fails_immediately_without_retry(suite, method):
+    from tminio_test_runner.soak_cases import configure_soak
+    configure_soak(suite, 300, 1)
+    suite.owned_buckets.add(suite.bucket)
+    args = {"Bucket": suite.bucket, "Key": "data"}
+    if method == "put_object":
+        args["Body"] = b"part"
+    elif method == "upload_part":
+        args.update(UploadId="upload", PartNumber=1, Body=b"part")
+    else:
+        args.update(UploadId="upload", MultipartUpload={"Parts": [{"PartNumber": 1, "ETag": "part"}]})
+    with Stubber(suite.client) as stub:
+        stub.add_client_error(method, service_error_code="SlowDown", http_status_code=503,
+                              expected_params=args)
+        with pytest.raises(endpoint.ClientError) as error:
+            suite.call(method, **args)
+        assert error.value.response["ResponseMetadata"]["HTTPStatusCode"] == 503
+        stub.assert_no_pending_responses()

@@ -46,11 +46,14 @@ with an original and a copy key in each slot. Each cycle:
 2. Copies it and downloads both objects, verifying their SHA-256 checksums and
    sizes against the original payload. Downloads are checked as streams.
 3. Deletes the original and confirms it is no longer visible.
-4. Starts a multipart upload, uploads one part, and aborts the upload.
+4. Starts a multipart upload, waits for its part upload, completes it, and verifies
+   the completed object's SHA-256 checksum, size and metadata.
 5. Removes that cycle's data versions and delete marker before proceeding.
 
-This exercises multipart creation, part transfer and abort. The normal endpoint
-suite separately checks completed large multipart uploads.
+This exercises multipart creation, part transfer and completion. Successful cycles
+issue no abort requests. Only failed or unacknowledged uploads are aborted during
+cleanup. The normal endpoint suite separately checks large multipart uploads and
+deliberate aborts.
 
 | Setting | Default | Adjustment |
 | --- | --- | --- |
@@ -59,7 +62,7 @@ suite separately checks completed large multipart uploads.
 | Object sizes | 64 KiB, 1 MiB, 16 MiB | Automatic rotation |
 | Key slots per client | 32, with 2 keys per slot | Fixed |
 | Possible distinct keys | 2,048 | 64 × client count |
-| Live versions and delete markers | At most 96 | At most 3 × client count |
+| Live versions and delete markers | At most 128 | At most 4 × client count |
 | Pending multipart uploads | At most 32 | At most client count |
 | Test deadline | Greater of 1800 seconds or duration + 600 seconds | Normally automatic |
 | Cleanup deadline | 300 seconds | `--cleanup-timeout SECONDS` |
@@ -105,9 +108,17 @@ Setup uses fresh owned test buckets. Teardown runs after success, a failed check
 a timeout or normal interruption. It removes versions, delete markers, pending
 uploads, buckets and local payloads. Reports remain. Cleanup relies on in-memory
 ownership records, so log rotation does not discard the information needed for
-normal teardown. Cleanup failures fail the run and report remaining bucket names. On interruption,
-the runner first waits for in-flight requests and cycle cleanup before removing
-buckets, so shutdown is not necessarily immediate.
+normal teardown. Cleanup failures fail the run and report remaining bucket names.
+When the duration expires, a worker fails, or the run is interrupted, no new cycles
+start. Already-started cycles finish their requests, multipart completion,
+verification and cleanup before buckets are removed, so shutdown is not necessarily
+immediate. A failed upload signals other workers to stop starting cycles before
+its abort cleanup begins.
+
+During soak validation and cleanup, listed multipart uploads are checked with
+`ListParts`. An HTTP 404 `NoSuchUpload` entry is treated as stale; other errors
+still fail the check. Active uploads, including those with no parts yet, remain
+eligible for cleanup.
 
 A forced kill, test-machine failure or loss of access to MinIO can prevent complete
 cleanup; a surviving report is evidence for investigation, not a guarantee of
