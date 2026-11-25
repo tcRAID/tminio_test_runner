@@ -1,6 +1,6 @@
-# Consolidated runner validation
+# Runner validation
 
-This runner combines the original endpoint/Locust coverage with the service repository's development release suite. The supported default is the current-service HTTP endpoint command with 20 checks and automatic setup/teardown. The bounded soak and configured lab are separate selections.
+This runner provides endpoint, soak and optional lab tests for MinIO. The supported default is the HTTP endpoint command with 20 checks and automatic setup/teardown. The bounded soak and configured lab are separate selections. The historical fixture runs below validate runner behavior; they do not certify a particular official community MinIO release.
 
 Extended soak validation on 2026-11-19:
 
@@ -9,7 +9,7 @@ Extended soak validation on 2026-11-19:
 - SIGINT and an injected deadline after positive live progress, plus a deliberately lost multipart-create response after the upload and a part were committed, all returned FAIL with successful teardown. A forced 8 KiB request-log limit rotated 33 times, retained at most four bounded files, and still cleaned all test data.
 - Each scenario preserved an unrelated bucket's object bytes, versions, delete marker and pending multipart upload. The original fixture process remained running until validation explicitly stopped it; its disposable data was then removed.
 
-The fixture binary was `DEVELOPMENT.2026-06-12T00-50-31Z`, commit `2f0f5c40587db38a1832f8a85942bcb5881f7621`, SHA-256 `6cef72876d8f9d9e30776a5478b15a43e346a155a90dbb15495077f9a9726f6c`. The host was Ubuntu 22.04.5 x86_64, Python 3.10.12. This evidence validates the extended runner and teardown behavior; it does not claim a full one-hour/24-hour run, execution on the user's six-node SSD cluster, or validation of the current release on Ubuntu 26.04. Use the [soak guide](soak.md) to perform that deployment check.
+The fixture used a local development binary. The host was Ubuntu 22.04.5 x86_64, Python 3.10.12. This evidence validates the extended runner and teardown behavior; it does not claim a full one-hour/24-hour run or validation of a deployed distributed cluster. Use the [soak guide](soak.md) to perform that deployment check.
 
 Revalidated after the repository layout change on 2026-11-17:
 
@@ -21,9 +21,9 @@ Revalidated after the repository layout change on 2026-11-17:
 - Bad credentials, a 1-second test deadline, SIGINT, an injected object-check failure, partial setup, a committed PUT with a lost response and an unfinished multipart upload with a lost create response all returned failure while successfully cleaning their test data.
 - The fixture's pre-existing bucket, bytes and version history remained unchanged, and its service process remained running throughout these scenarios.
 
-The fixture binary was an existing development binary, not a newly built release artifact. The validation host was Ubuntu 22.04 x86_64 with Python 3.10.12. This does not claim execution on Ubuntu 26.04, aarch64, a real distributed deployment, an actual OS upgrade, or the full advanced lab matrix. Run the supplied command against the deployed target for that endpoint's results. HTTPS encryption round trips, external integrations, node outages, maintenance and two-cluster replication need their corresponding environments.
+The fixture binary was an existing development binary, not a newly built release artifact. The validation host was Ubuntu 22.04 x86_64 with Python 3.10.12. This does not claim execution on other operating systems or architectures, a real distributed deployment, an actual OS upgrade, or the full advanced lab matrix. Run the supplied command against the deployed target for that endpoint's results. HTTPS encryption round trips, external integrations, node outages, maintenance and two-cluster replication need their corresponding environments.
 
-The retained advanced split-object tests reflect the release rollback: merged noncurrent cleanup was withdrawn, and split-object space retention remains an accepted tradeoff. A passing basic endpoint run does not establish the advanced lab gates or production qualification.
+Advanced lab cases require the server capabilities and topology described in the [lab guide](lab.md). A passing basic endpoint run does not establish the advanced lab gates or production qualification.
 
 The repository and archive now share `src/`, `tests/unit/`, `tests/system/`,
 `docs/`, `config/`, `requirements/` and `scripts/`. Pytest defaults to harness unit

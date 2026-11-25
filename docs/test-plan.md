@@ -1,6 +1,6 @@
-# Single-cluster release validation
+# Single-cluster MinIO test plan
 
-The default command targets an already deployed MinIO service, including Ubuntu 26.04. Every case sets up its own required state. Teardown runs after success or failure. No old release, pre-upgrade phase, application bucket or second cluster is required.
+The default command targets an already deployed community MinIO service. Every case sets up its own required state. Teardown runs after success or failure. No old release, pre-upgrade phase, application bucket or second cluster is required.
 
 | # | Default check | Main assertions |
 | --- | --- | --- |
@@ -27,15 +27,15 @@ The default command targets an already deployed MinIO service, including Ubuntu 
 
 CORS HTTP 501 is reported explicitly as an unsupported bucket API, never as a successful CORS round trip. HTTP cannot perform an SSE-C encrypted round trip: its rejection is the expected check. Active governance retention and legal hold are only in the explicit lab group because they require retention/hold removal permissions. COMPLIANCE retention is never used.
 
-| Original runner coverage | Consolidated location |
+| Coverage | Command or location |
 | --- | --- |
 | Health, CRUD, metadata, tags, ranges, copy, multipart, versioning, presigned URLs | Default cases 1–8, 14–15, 19 |
 | Conditional requests, bucket location/tags/CORS, anonymous policy, SSE-C | Default cases 9–12; stricter payload and denial assertions |
 | Object-lock configuration | Default case 13, without retained objects |
 | Legal hold and governance retention | Explicit lab concurrency group |
-| Locust long-run traffic | `./run.sh soak URL`; bounded objects, versions and uploads; original checksum oracle |
-| Local source build / launched-server smoke | Retired from the public endpoint workflow; service repository owns builds |
-| Development release topology, split-object lifecycle, fault recovery, admin, movement, replication | Retained under `./run.sh lab GROUP`, configured independently |
+| Sustained S3 traffic | `./run.sh soak URL`; bounded objects, versions and uploads; original checksum oracle |
+| Local binary checks | Optional [binary tool](binary.md) for a supplied MinIO executable |
+| Advanced topology, lifecycle, fault recovery, admin, movement, replication | `./run.sh lab GROUP`; requires compatible server capabilities and an independently configured disposable lab |
 
 ## Optional sustained activity
 
@@ -45,6 +45,6 @@ At the defaults, the workload can visit 2,048 distinct keys while keeping at mos
 
 Progress is printed every 30 seconds and statistics are saved during the run. Request logs rotate at 64 MiB with three backups, limiting that log set to approximately 256 MiB. Teardown uses the runner's in-memory ownership records and does not depend on retaining the complete request log. All reports remain after teardown. See [soak guide](soak.md) for longer runs and concurrency settings.
 
-The release's withdrawn merged noncurrent cleanup is not treated as a fixed feature. Default tests do not require split-object space reclamation. Forced pool placement, rebalance/decommission, node failures, replication, KMS/IAM integrations, console UI and performance qualification need separate lab or application checks.
+Default tests do not measure physical storage reclamation across pools. Forced pool placement, rebalance/decommission, node failures, replication, KMS/IAM integrations, console UI and performance qualification need separate lab or application checks.
 
-Validation evidence for this consolidation is recorded in [validation record](validation.md). Harness tests and a disposable HTTP fixture validate the runner; execution on the actual Ubuntu 26.04 cluster remains the deployment check.
+Historical runner validation is recorded in the [validation record](validation.md). Harness tests and a disposable HTTP fixture validate the runner; run the tests against your deployed community MinIO version for that deployment's results.

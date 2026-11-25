@@ -23,7 +23,7 @@ def test_noncurrent_expiry_preserves_exact_versions(src, bucket_factory, setting
             old_client.close()
         current = put_version(src, bucket, "history", b"current-must-survive")
         assert len(metadata_snapshot(pool_roots(settings), bucket, "history")) == 1, (
-            "ordinary noncurrent expiry requires a proven single-pool object; merged cleanup was withdrawn"
+            "ordinary noncurrent expiry requires a proven single-pool object"
         )
     # Enable only after all fixtures exist, otherwise construction itself races expiry.
     src.put_bucket_lifecycle_configuration(Bucket=bucket, LifecycleConfiguration={"Rules": [

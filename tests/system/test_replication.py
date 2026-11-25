@@ -251,9 +251,8 @@ def _validate_oracle(oracle):
         identity = (record.key, record.version)
         previous = unique.get(identity)
         if previous is not None:
-            # This fork returns the existing current marker on repeated single
-            # DELETEs. Concurrent callers can legitimately acknowledge that
-            # same marker; duplicated PUT identities or conflicting state cannot.
+            # Accept identical repeated marker acknowledgements from concurrent
+            # DELETEs; reject duplicated PUT identities or conflicting state.
             assert previous.marker and record.marker and previous == record, (
                 f"duplicate data identity or conflicting marker acknowledgement: {identity}"
             )

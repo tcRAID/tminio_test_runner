@@ -1,7 +1,7 @@
 # Optional binary development check
 
 This development tool starts its own private localhost MinIO process. For the
-already deployed Ubuntu 26.04 service, use the [endpoint command](endpoint.md).
+already deployed community MinIO service, use the [endpoint command](endpoint.md).
 From the repository or extracted archive root:
 
 ```bash
@@ -90,9 +90,8 @@ with `./run.sh unit`; filter binary harness cases with
 `./run.sh unit -- -k binary_check -v`.
 
 Historical binary validation on 2026-11-12 passed all 13 live checks on Ubuntu
-22.04.5 x86_64 and Python 3.10.12 using the development binary with SHA-256
-`8ed3120b33a31c1eb7879a84e211c989f479d0704926eba817a7a73ce6fb7377`.
+22.04.5 x86_64 and Python 3.10.12 using a local development binary.
 A one-second deadline stopped its process and retained diagnostic data as designed
 for this optional binary tool. These are historical results, not evidence for a
-new candidate binary or Ubuntu 26.04. Current endpoint and harness validation is
-recorded in [validation.md](validation.md).
+particular official community MinIO release or another host. Endpoint and harness
+validation is recorded in [validation.md](validation.md).

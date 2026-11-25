@@ -130,9 +130,8 @@ class EndpointCases:
         expected = {(r["version"], False) for r in records} | {(m, True) for m in markers}
         check(len({r["version"] for r in records}) == len(records), "duplicate acknowledged data version IDs")
         check(not {r["version"] for r in records}.intersection(markers), "data/marker version ID collision")
-        # This fork returns an existing latest marker for repeated DELETEs
-        # (erasureServerPools.DeleteObject). Concurrent DELETE acknowledgements
-        # may therefore share a marker ID; every distinct acknowledged ID must exist.
+        # Accept repeated marker IDs in concurrent DELETE acknowledgements;
+        # every distinct acknowledged marker and data version must exist.
         actual = self.history(self.versioned_bucket, key)
         check(len(actual) == len(expected) and {(v["version"], v["marker"]) for v in actual} == expected,
               "concurrent history lost, duplicated or added a version")

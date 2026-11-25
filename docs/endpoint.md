@@ -1,6 +1,6 @@
-# MinIO release test for Ubuntu 26.04
+# Community MinIO endpoint tests
 
-Run this command against your already deployed MinIO S3 API endpoint:
+Run this command against your already deployed community MinIO S3 API endpoint:
 
 ```bash
 ./run.sh http://HOST:9000
@@ -71,9 +71,9 @@ on a node without internet.
 Actual lifecycle processing is required: saving configuration alone does not pass
 that check. The script verifies backdated fixture timestamps and waits up to 600
 seconds for scanner actions. It does not change scanner settings. It does not
-require split-object noncurrent space reclamation, which this release does not
-promise. Concurrent DELETE calls may return an existing marker, as this fork
-implements; each distinct marker and every acknowledged data version is checked.
+measure physical storage reclamation across pools. The concurrent DELETE check
+accepts repeated marker IDs; each distinct marker and every acknowledged data
+version is checked.
 
 ## Credentials and optional settings
 

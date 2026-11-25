@@ -25,7 +25,7 @@ The last command checks functional behavior again after the soak. Run the test
 from a separate machine through the S3 endpoint your applications use. The
 self-contained archive needs no internet or dependency installation at runtime.
 
-The defaults are 32 clients and five minutes. For a six-node cluster, begin with
+The defaults are 32 clients and five minutes. For a distributed cluster, begin with
 32 clients and review request latency, node/drive health, server logs, and resource
 use on the cluster and test machine. To increase concurrency after that run passes:
 
@@ -35,7 +35,7 @@ use on the cluster and test machine. To increase concurrency after that run pass
 
 There is no need to set object sizes or key counts. More clients increase load;
 a longer duration increases observation time. Neither establishes that a cluster
-with 72 SSDs has reached its capacity or exercised every drive.
+has reached its capacity or exercised every drive.
 
 ## Workload and bounds
 

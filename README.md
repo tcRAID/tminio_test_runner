@@ -1,6 +1,6 @@
 # tminio_test_runner
 
-System tests for a running MinIO S3 endpoint, including the tMinIO release on Ubuntu 26.04. This repository owns the system tests; the [tMinIO repository](https://github.com/tcRAID/tMinIO) owns the service.
+Independent system tests for the official community MinIO server through its S3 endpoint. In this repository, `tminio` means **test MinIO**. The runner tests an existing deployment and manages its own test data.
 
 Run one command:
 
@@ -45,7 +45,7 @@ See [usage guide](docs/usage.md) for details and [lab guide](docs/lab.md) for th
 
 Build a transfer archive on a connected workstation with `python3 scripts/package_release.py`. The output is `dist/tminio_test_runner.tar.gz` and its SHA-256 file. The allowlisted archive excludes local credentials, configuration and reports. To reuse pinned dependencies from a previously verified extracted archive, add `--vendor-from /path/to/extracted/archive`.
 
-The consolidated release suite was moved from the service repository's development release tests. Imported MinIO-derived code is distributed under [AGPL-3.0](LICENSE).
+Imported MinIO-derived code is distributed under [AGPL-3.0](LICENSE).
 
 Repository layout: application code in `src/tminio_test_runner/`, harness regressions in
 `tests/unit/`, advanced cluster tests in `tests/system/`, guides in `docs/`, examples

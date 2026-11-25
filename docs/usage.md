@@ -1,6 +1,6 @@
 # Running the tests
 
-Run `./run.sh http://HOST:9000` and enter the access key and hidden secret key. The same command works from the source checkout and extracted archive. Defaults cover normal use; no test selection or configuration file is required.
+Run `./run.sh http://HOST:9000` against your community MinIO endpoint and enter the access key and hidden secret key. The same command works from the source checkout and extracted archive. Defaults cover normal use; no test selection or configuration file is required.
 
 For unattended runs, provide a complete credential pair through your environment or secret manager:
 
@@ -44,4 +44,4 @@ Use `--duration 86400` for 24 hours. The deadline adjusts automatically when omi
 
 For advanced lab tests, use `./run.sh lab --list`, then configure `config/lab.local.json` from `config/lab.example.json` and select a group, for example `./run.sh lab concurrency`. These tests may require multiple clusters, server logs, storage paths, mc and operational hooks. They are opt-in and use the separate `TMINIO_TEST_*` credential environment described in [lab guide](lab.md). No deployment-specific shutdown commands are guessed.
 
-The former `source` and local-server `smoke` commands and Locust scripts have been retired. Their endpoint assertions are integrated into the normal command and the bounded soak; server build validation belongs in the service repository. There is one supported endpoint runner.
+The former `source` and local-server `smoke` commands and Locust scripts have been retired. Use the normal endpoint command and the bounded soak for a running service. To check a supplied MinIO executable locally, use the optional [binary tool](binary.md).

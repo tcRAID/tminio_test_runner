@@ -8,6 +8,11 @@ uploads and test legal holds. Cleanup failures fail the run and write remaining 
 to `remaining-test-buckets.json`. Forced process termination or an unreachable service
 can prevent this cleanup.
 
+Lab cases depend on specific server capabilities, configuration settings and
+storage layouts. Check those requirements against the MinIO version under test
+before selecting a group; the full lab suite is not a compatibility promise for
+every community MinIO release.
+
 ## 1. 安裝與設定
 
 需要 Python 3.10+、網路可達的 S3 endpoint；admin／replication 測試另需可用的
@@ -112,7 +117,7 @@ newest pool 與移至其他 pool，固定 ENV 會使 fixture 無效。
 | --- | --- | --- |
 | `test_s3_concurrency.py` | 多執行緒共享 key PUT／single、bulk DELETE；version rollback；精確版本 ID、GET/HEAD、SHA256；multipart complete/abort；legal hold | 預設 16 workers × 32 rounds；不能只看 HTTP 200 |
 | `test_lifecycle.py` | 已證明在單一 pool 的 NC 到期後恰好保留 current＋10；EODM 不讓刪除物件復活 | mc、`pool_roots`；先以 `newest_pool_min_free=1` 建立並核對單 pool fixture |
-| `test_split_lifecycle.py` | PUT／multipart 留在 newest pool 與空間門檻 spill；split current／version-ID 讀取；marker 放置與防復活；bulk markers 下保留 split 版本 | mc、`pool_roots`；每次寫入以 metadata hash 證明 pool，設定最後還原；不宣稱 merged cleanup 可回收空間 |
+| `test_split_lifecycle.py` | PUT／multipart 留在 newest pool 與空間門檻 spill；split current／version-ID 讀取；marker 放置與防復活；bulk markers 下保留 split 版本 | mc、`pool_roots`；每次寫入以 metadata hash 證明 pool，設定最後還原；不驗證跨 pool 的實體空間回收 |
 | `test_admin.py` | S3 流量期間縮減／增加 expiry workers，檢查保留版本 | admin 群組；修改整個 cluster 的 ILM config，最後恢復並讀回核對 |
 | `test_faults.py` | 保持 quorum 的 node outage；失去 quorum 後恢復；所有已成功 PUT 的資料仍可讀 | faults 群組；需要 stop/start hooks 和 admin info 權限；連線中斷本身不算已證明 quorum loss |
 | `test_replication.py` | 精確版本／marker／永久刪除、metadata/tags/Expires；>128MiB PUT+DELETE；target outage/backlog/恢復；replica-only marker 的 EODM grace 與 local control；從 replica 還原歷史 | 第二個獨立 cluster、mc；outage case 需要 target hooks；grace case 要求 target 有合法的正數 grace |
