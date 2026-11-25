@@ -2,17 +2,6 @@
 
 This runner combines the original endpoint/Locust coverage with the service repository's development release suite. The supported default is the current-service HTTP endpoint command with 20 checks and automatic setup/teardown. The bounded soak and configured lab are separate selections.
 
-HTTP 503 retries and socket-timeout validation on 2026-11-20:
-
-- All 282 harness regressions passed from source and from the extracted archive launched from an unrelated directory with spaces in the archive path. New coverage checks the default/custom SDK read timeout, bounded 503 retries, exact backoff, replayable request bodies, concurrent counters, full redacted retry history across request-log rotation, expected 404 recovery, and ambiguous committed-write cleanup.
-- The retry regressions verify that a third consecutive 503 fails the request and the run, even if a later whole-bucket teardown attempt succeeds. Normal endpoint workload requests remain strict, and workload transport timeouts are not retried.
-- The extracted archive ran an unmodified four-client, five-second soak with `--read-timeout 120` against the same disposable two-pool/eight-directory fixture described below. It passed 32 cycles, verified 360,054,784 bytes, and removed its test data.
-- Injected 503s after real committed PUT, COPY, DELETE and multipart-create operations produced eight logged 503s, eight retries and four recovered requests. The run passed, including reconciliation of unacknowledged versions and multipart uploads containing parts. This fixture reused its delete marker on repeated DELETE, so the validator was corrected to permit marker reuse while still requiring distinct PUT/COPY versions and upload IDs; the affected checks were rerun.
-- Persistent injected GET failures produced exactly three 503s and two retries, then FAIL with successful teardown. Both injected scenarios preserved the unrelated bucket's bytes, versions, delete marker and pending upload, as did the normal run. The original fixture processes remained running until validation explicitly stopped them and removed their disposable data.
-- One initial source run failed an existing hook-supervisor cleanup regression before the new retry tests ran. The focused hook file (11 tests), full source suite, and extracted archive suite then passed without changing hook code. Its cause was not established; the strict cleanup assertion remains in place.
-
-These shortened checks validate runner behavior on the June development fixture and Ubuntu 22.04 host described below. They do not validate the deployed November release, Ubuntu 26.04, the six-node cluster, or a full one-hour run.
-
 Extended soak validation on 2026-11-19:
 
 - All 251 harness regressions passed from source and from the extracted archive launched from an unrelated directory, with spaces in the archive path. They include real repeated SIGINT/SIGTERM/SIGALRM during worker shutdown, automatic one-hour/24-hour deadlines, streaming checksums, key reuse, lost responses and request-log rotation.

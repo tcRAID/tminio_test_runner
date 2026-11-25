@@ -88,7 +88,6 @@ your environment or secret manager; otherwise the script prompts for both.
 | Option | Purpose |
 | --- | --- |
 | `--timeout 3600` | Increase the overall deadline; default 1800 seconds. |
-| `--read-timeout 120` | Allow a longer SDK socket read wait; default 60 seconds. Does not enable retries or change health-probe timeouts. |
 | `--cleanup-timeout 600` | Separate teardown deadline; default 300 seconds. Cleanup still runs when the test deadline expires. |
 | `--lifecycle-timeout 1800` | Increase the lifecycle wait; default 600 seconds. Increase the overall deadline too if needed. |
 | `--expected-commit ID` | Require this exact reported MinIO commit ID on every node. Use a commit ID, not a release-tag name. |
@@ -124,12 +123,8 @@ For sustained activity on the same endpoint, use the separate soak command:
 
 This runs 32 clients for one hour, rotating among 64 KiB, 1 MiB and 16 MiB
 objects. It creates and removes its own test data. Its deadline adjusts to the
-requested duration, so no additional timeout option is normally needed. Soak
-automatically retries HTTP 503 responses up to twice and reports recoveries and
-exhaustion. A soak PASS can include recovered 503s. The normal endpoint checks
-remain strict. Workload socket read timeouts fail the check in both commands;
-teardown independently retries whole-bucket cleanup after transient errors. See [soak guide](soak.md) for 24-hour runs, concurrency
-and report interpretation.
+requested duration, so no additional timeout option is normally needed. See
+[soak guide](soak.md) for 24-hour runs, concurrency and report interpretation.
 
 Forced pool placement, threshold crossings, healing, fault injection,
 rebalance/decommission, external integrations, console login and replication

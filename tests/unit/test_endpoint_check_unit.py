@@ -37,57 +37,6 @@ def test_valid_urls_and_secure_client_defaults(suite):
     assert all(suite.owner_token in b and len(b) <= 63 for b in suite.planned_buckets)
 
 
-@pytest.mark.parametrize("options,expected", [({}, 60), ({"read_timeout": 120}, 120)])
-def test_read_timeout_reaches_main_worker_and_sts_clients(tmp_path, options, expected):
-    value = endpoint.EndpointSuite("http://minio.invalid:9000", "test-access", "test-secret", tmp_path, **options)
-    try:
-        clients = [value.client, value.make_client(), value.make_client(service="sts")]
-        for client in clients:
-            assert client.meta.config.read_timeout == expected
-            assert client.meta.config.connect_timeout == 5
-            assert client.meta.config.retries["total_max_attempts"] == 1
-            assert client.meta.config.proxies == {}
-        assert value.report["read_timeout_seconds"] == expected
-    finally:
-        for client in value.clients:
-            client.close()
-        value.cleanup_data()
-
-
-@pytest.mark.parametrize("soak", [False, True])
-@pytest.mark.parametrize("arguments,expected", [([], 60), (["--read-timeout", "120"], 120)])
-def test_cli_read_timeout_is_applied_and_reported_before_health_check(
-        tmp_path, monkeypatch, soak, arguments, expected):
-    created = []
-    def stop_before_network(value):
-        created.append(value)
-        raise RuntimeError("intentional health failure before network access")
-    monkeypatch.setattr(endpoint.EndpointSuite, "cluster_health", stop_before_network)
-    monkeypatch.setattr(endpoint, "credentials", lambda: ("test-access", "test-secret"))
-    args = ["http://minio.invalid:9000", "--work-dir", str(tmp_path), *arguments]
-    if soak:
-        args += ["--duration", "3600"]
-    assert endpoint.main(args, soak=soak) == 1
-    value, = created
-    assert value.client.meta.config.read_timeout == expected
-    report = json.loads((value.directory / "results.json").read_text())
-    assert report["read_timeout_seconds"] == expected
-    assert report["timeout_seconds"] == (4200 if soak else 1800)
-    assert report["results"][0]["name"] == "Cluster health and identity"
-    assert "intentional health failure" in report["results"][0]["actual"]
-    assert not value.data_retained()
-
-
-@pytest.mark.parametrize("soak", [False, True])
-@pytest.mark.parametrize("seconds", ["0", "-1"])
-def test_invalid_read_timeout_is_rejected_before_credentials_or_network(monkeypatch, capsys, soak, seconds):
-    monkeypatch.setattr(endpoint, "credentials", lambda: pytest.fail("invalid read timeout reached credential lookup"))
-    with pytest.raises(SystemExit) as error:
-        endpoint.main(["http://minio.invalid:9000", "--read-timeout", seconds], soak=soak)
-    assert error.value.code == 2
-    assert "--read-timeout must be positive" in capsys.readouterr().err
-
-
 @pytest.mark.parametrize("operation", ["start", "stop", "restart"])
 def test_endpoint_can_never_control_a_service(suite, operation):
     with pytest.raises(AssertionError, match="cannot"):

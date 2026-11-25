@@ -44,7 +44,6 @@ src/tminio_test_runner/protocol_cases.py
 src/tminio_test_runner/service_hook.py
 src/tminio_test_runner/soak_cases.py
 src/tminio_test_runner/request_log.py
-src/tminio_test_runner/request_retry.py
 tests/__init__.py
 tests/conftest.py
 tests/system/__init__.py
@@ -74,7 +73,6 @@ tests/unit/test_release_package_unit.py
 tests/unit/test_runner_unit.py
 tests/unit/test_service_hook_unit.py
 tests/unit/test_soak_unit.py
-tests/unit/test_request_retry_unit.py
 docs/binary.md
 docs/endpoint.md
 docs/lab.md

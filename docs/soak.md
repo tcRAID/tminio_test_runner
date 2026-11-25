@@ -59,10 +59,9 @@ suite separately checks completed large multipart uploads.
 | Object sizes | 64 KiB, 1 MiB, 16 MiB | Automatic rotation |
 | Key slots per client | 32, with 2 keys per slot | Fixed |
 | Possible distinct keys | 2,048 | 64 × client count |
-| Live versions and delete markers | Normally at most 96; retry bound 288 | Normally 3 × clients; up to 9 × with retries |
-| Pending multipart uploads | Normally at most 32; retry bound 96 | Normally 1 × clients; up to 3 × with retries |
+| Live versions and delete markers | At most 96 | At most 3 × client count |
+| Pending multipart uploads | At most 32 | At most client count |
 | Test deadline | Greater of 1800 seconds or duration + 600 seconds | Normally automatic |
-| SDK socket read timeout | 60 seconds | `--read-timeout SECONDS` |
 | Cleanup deadline | 300 seconds | `--cleanup-timeout SECONDS` |
 
 Each slot is cleaned before reuse, so stored versions and uploads do not accumulate
@@ -77,53 +76,6 @@ Plan for approximately 2 GiB free test-machine RAM with 32 clients, and more at
 higher concurrency. This estimate is not an enforced reservation: measure the
 test machine as well as the servers when selecting concurrency.
 
-If a run fails with `ReadTimeoutError`, you can compare a run that allows a
-120-second socket read wait:
-
-```bash
-./run.sh soak http://HOST:9000 --duration 3600 --read-timeout 120
-```
-
-This setting applies to SDK clients, including every soak worker and SDK cleanup
-requests. It is a socket read timeout, not a limit on the total duration of an
-operation or the entire soak. It does not change the five-second SDK connection
-timeout or health-probe timeouts. Workload socket read timeouts fail the check;
-teardown separately retries whole-bucket cleanup after transient failures. The chosen value is recorded
-as `read_timeout_seconds` in `results.json`. A passing run at 120 seconds permits
-slower responses; it does not explain or erase the earlier failure at 60 seconds.
-Compare the run with cluster and network logs. Increasing `--timeout` alone does
-not change this socket timeout.
-
-On failure or interruption, active workers must finish before bucket teardown.
-This drain can exceed the overall deadline, and longer socket timeouts can extend
-the wait. The overall deadline is therefore not a hard process completion limit.
-
-## HTTP 503 handling
-
-Soak automatically retries HTTP 503 responses during setup, workload and cleanup:
-up to two retries, or three attempts in total, per SDK call. The waits are one
-second and two seconds, each with 0–0.25 seconds of random delay. No extra option
-is needed. SDK built-in retries remain disabled so there is no additional hidden
-retry layer.
-
-This policy applies only to HTTP 503. Workload read timeouts, connection failures
-and unexpected other HTTP errors fail the check. Teardown independently retries
-whole-bucket cleanup after transient errors; those retries do not erase a workload failure.
-Reads and writes can be
-retried only when any request body can be replayed safely; the soak's generated
-byte payloads support replay. A body that cannot be replayed fails and is recorded
-as an unreplayable request. A backend may have committed a write before a proxy
-returns 503, so replay can create extra versions, markers or upload IDs. Before
-starting another cycle, the runner reconciles and removes these artifacts for
-the affected test keys. The table includes the larger bounds with retries. The normal endpoint checks retain their strict
-behavior, apart from existing cleanup retries.
-
-A request that succeeds on retry can contribute to a PASS. Three consecutive
-503 responses exhaust the retry allowance and fail the run. Exhaustion or an
-unreplayable body remains a failure even if a later teardown attempt succeeds. A PASS with
-recovered 503s therefore records service interruptions that should be reviewed
-alongside cluster and load-balancer logs.
-
 ## Progress and results
 
 The console prints elapsed time, completed cycles, verified GiB and unique keys
@@ -136,16 +88,9 @@ run can provide little coverage even with many configured clients.
 
 Request logs rotate at 64 MiB with three backups: `requests.jsonl` and
 `requests.jsonl.1` through `.3`. Together, these use approximately 256 MiB in total. The oldest request details are removed
-as the log rotates; summaries and statistics remain.
-
-The separate `retry-events.jsonl` keeps every HTTP 503, retry, recovery and
-exhaustion event with sensitive values redacted. It does not rotate and can grow
-throughout a long run. The `http_503_retry` section in `results.json` records
-`responses`, `retries`, `recovered_requests`, `exhausted_requests` and
-`unreplayable_requests`; the console prints final counts. Preserve this file with
-the summary when investigating a run, including a PASS with recovered requests.
-Choose a local report directory with sufficient free space, particularly when
-keeping reports from several runs.
+as the log rotates; summaries and statistics remain. Stored test data is also
+bounded. Choose a local report directory with sufficient free space, particularly
+when keeping reports from several runs.
 
 A passing result requires the selected checks and teardown to pass. Review
 failures alongside existing cluster monitoring for unexpected request errors,

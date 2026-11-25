@@ -30,10 +30,8 @@ def main(argv=None):
     if args[:1] in (["endpoint"], ["soak"]) and any(a in ("-h", "--help") for a in args[1:]):
         print(HELP + "\nS3 endpoint options (optional):\n"
               "  --timeout 1800 --cleanup-timeout 300 --lifecycle-timeout 600\n"
-              "  --read-timeout 60 (SDK socket reads)\n"
               "  --work-dir . --region us-east-1 --expected-commit ID --ca-file CA.pem\n"
-              "  soak only: --duration 300 --workers 32 (timeout grows automatically)\n"
-              "  soak retries HTTP 503 at most twice and reports every retry\n")
+              "  soak only: --duration 300 --workers 32 (timeout grows automatically)\n")
         return 0
     if args and args[0] in ("source", "smoke"):
         print("Source builds and local-server smoke were retired. Use ./run.sh http://HOST:9000 against a running service.", file=sys.stderr)
